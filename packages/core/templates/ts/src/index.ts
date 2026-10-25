@@ -575,6 +575,11 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 async function startHttp(legacySse: boolean): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? "127.0.0.1";
+  const loopback = ["127.0.0.1", "localhost", "::1"].includes(host);
+  if (!loopback && !process.env.MCP_AUTH_TOKEN && process.env.MCP_ALLOW_UNAUTHENTICATED !== "1") {
+    log(`Refusing to listen on ${host} without MCP_AUTH_TOKEN. Set MCP_ALLOW_UNAUTHENTICATED=1 if access is controlled elsewhere (e.g. Cloud Run IAM).`);
+    process.exit(1);
+  }
   const sseSessions = new Map<string, SSEServerTransport>();
 
   const httpServer = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {

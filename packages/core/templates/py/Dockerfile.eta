@@ -1,0 +1,23 @@
+<% if (it.docs && it.docs.contentMode !== "embedded") { %>
+# The documentation license does not allow redistribution: it is downloaded while building this image.
+# Keep the image in a private registry.
+FROM node:22-slim AS docs
+WORKDIR /app
+COPY data ./data
+ENV MAKE_MCP_CACHE_DIR=/cache
+RUN npx -y <%= it.generator %> refresh .
+
+<% } %>
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+WORKDIR /app
+COPY pyproject.toml ./
+RUN uv sync --no-dev --no-install-project
+COPY server.py ./
+COPY data ./data
+<% if (it.docs && it.docs.contentMode !== "embedded") { %>
+COPY --from=docs /cache /app/.cache
+ENV MAKE_MCP_CACHE_DIR=/app/.cache
+<% } %>
+ENV MCP_TRANSPORT=http HOST=0.0.0.0 PORT=8080
+EXPOSE 8080
+CMD ["uv", "run", "--no-sync", "server.py"]

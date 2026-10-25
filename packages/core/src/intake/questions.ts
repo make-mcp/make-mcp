@@ -147,6 +147,7 @@ function buildQuestion(id: QuestionId, findings: Findings, answers: IntakeAnswer
     case "transport":
     case "outDir":
     case "tools":
+    case "deploy":
       return undefined;
   }
 }

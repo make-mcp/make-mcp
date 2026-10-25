@@ -41,8 +41,11 @@ ANTHROPIC_API_KEY=… npx @make-mcp/cli create https://docs.example.com
 MAKE_MCP_LLM_BASE_URL=http://localhost:11434/v1 MAKE_MCP_LLM_MODEL=qwen3 npx @make-mcp/cli create …   # Ollama & co.
 ```
 
-Generated servers speak **stdio** and **Streamable HTTP** (legacy SSE via flag), ship a Dockerfile for
-Cloud Run & co., and contain no dependency on this generator.
+Generated servers speak **stdio** and **Streamable HTTP** (legacy SSE via flag) and contain no dependency on this
+generator. HTTP servers (`--transport http`) also get **Google Cloud Run** templates: a Dockerfile, a Knative
+`deploy/cloudrun/service.yaml` (scale to zero, secrets from Secret Manager) and a `skaffold.yaml` for Skaffold /
+Cloud Code, plus the `gcloud` commands in their README. On a public interface they only start with `MCP_AUTH_TOKEN`
+(or `MCP_ALLOW_UNAUTHENTICATED=1` behind Cloud Run IAM).
 
 ## Install
 
@@ -133,7 +136,7 @@ claude mcp add make-mcp-dev -- node "$PWD/packages/cli/dist/index.js" mcp
 
 - ~~M2: LLM-assisted API extraction from prose docs, grouping for large APIs, Python workspace detection~~ ✓
 - ~~M3: local web UI and Docker image~~ ✓
-- M4: Cloud Run deploy templates (Skaffold/Cloud Code)
+- ~~M4: Cloud Run deploy templates (Skaffold/Cloud Code)~~ ✓
 - M5: community catalog of generator configs
 
 ## License

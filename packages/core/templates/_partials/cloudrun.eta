@@ -1,0 +1,35 @@
+## Deploy to Google Cloud Run
+
+The service scales to zero, so it costs nothing while idle. Every request needs `Authorization: Bearer <token>`;
+the server refuses to start on a public interface without `MCP_AUTH_TOKEN`.
+
+1. Create the secrets once (and grant the service account `roles/secretmanager.secretAccessor`):
+
+   ```bash
+   openssl rand -hex 32 | gcloud secrets create <%= it.service %>-auth-token --data-file=-
+<% for (const s of it.secrets) { %>   printf %s "$<%= s.env %>" | gcloud secrets create <%= s.secret %> --data-file=-
+<% } %>   ```
+
+2. Deploy – either directly from source:
+
+   ```bash
+   gcloud run deploy <%= it.service %> --source . --region europe-west1 --allow-unauthenticated \
+     --min-instances 0 --max-instances 3 \
+     --set-secrets MCP_AUTH_TOKEN=<%= it.service %>-auth-token:latest<% for (const s of it.secrets) { %>,<%= s.env %>=<%= s.secret %>:latest<% } %>
+   ```
+
+   or with Skaffold / Cloud Code, using `skaffold.yaml` and `deploy/cloudrun/service.yaml`:
+
+   ```bash
+   skaffold run --default-repo=europe-west1-docker.pkg.dev/PROJECT/mcp \
+     --cloud-run-project=PROJECT --cloud-run-location=europe-west1
+   ```
+
+3. Connect your agent to the URL Cloud Run prints:
+
+   ```bash
+   claude mcp add --transport http <%= it.name %> https://<%= it.service %>-….run.app/mcp --header "Authorization: Bearer $TOKEN"
+   ```
+
+`--allow-unauthenticated` makes the URL reachable for MCP clients; access is still limited by the bearer token.
+To use Cloud Run IAM instead, deploy without it and set `MCP_ALLOW_UNAUTHENTICATED=1`.

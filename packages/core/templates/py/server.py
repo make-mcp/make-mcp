@@ -607,8 +607,15 @@ def run_http(legacy_sse: bool) -> None:
     from starlette.responses import PlainTextResponse, Response
     from starlette.routing import Mount, Route
 
-    manager = StreamableHTTPSessionManager(app=create_server(), stateless=True)
+    host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "3000"))
     token = os.environ.get("MCP_AUTH_TOKEN")
+    if host not in ("127.0.0.1", "localhost", "::1") and not token and os.environ.get("MCP_ALLOW_UNAUTHENTICATED") != "1":
+        log(
+            f"Refusing to listen on {host} without MCP_AUTH_TOKEN. "
+            "Set MCP_ALLOW_UNAUTHENTICATED=1 if access is controlled elsewhere (e.g. Cloud Run IAM)."
+        )
+        sys.exit(1)
+    manager = StreamableHTTPSessionManager(app=create_server(), stateless=True)
 
     def authorized(scope: Any) -> bool:
         auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode()
@@ -643,7 +650,6 @@ def run_http(legacy_sse: bool) -> None:
         async with manager.run():
             yield
 
-    host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "3000"))
     log(f"listening on http://{host}:{port}/mcp" + (" (legacy SSE on /sse)" if legacy_sse else ""))
     uvicorn.run(Starlette(routes=routes, lifespan=lifespan), host=host, port=port, log_level="warning")
 

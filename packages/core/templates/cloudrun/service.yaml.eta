@@ -1,0 +1,46 @@
+# Cloud Run service for <%= it.service %> – scales to zero, every request needs `Authorization: Bearer $MCP_AUTH_TOKEN`.
+# Deploy with `skaffold run` (see skaffold.yaml) or `gcloud run services replace` after setting the image.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: <%= it.service %>
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "3"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: <%= it.service %>
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            # Secrets live in Secret Manager; create them once (README, "Deploy to Google Cloud Run").
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: <%= it.service %>-auth-token
+                  key: latest
+<% for (const s of it.secrets) { %>
+            - name: <%= s.env %>
+              valueFrom:
+                secretKeyRef:
+                  name: <%= s.secret %>
+                  key: latest
+<% } %>
+<% for (const v of it.plainVars) { %>
+            # - name: <%= v.name %>   # <%= v.description %>
+            #   value: ""
+<% } %>
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080

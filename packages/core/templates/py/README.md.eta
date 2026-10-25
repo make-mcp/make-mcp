@@ -10,6 +10,10 @@ uv sync
 <% } %>```
 
 <%~ include("/_partials/clients", it) %>
+<% if (it.deploy) { %>
+
+<%~ include("/_partials/cloudrun", it) %>
+<% } %>
 
 ## Regenerate
 

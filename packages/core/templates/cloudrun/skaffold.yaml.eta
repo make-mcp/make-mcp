@@ -1,0 +1,17 @@
+# Build and deploy to Cloud Run with Skaffold or Cloud Code:
+#   skaffold run --default-repo=REGION-docker.pkg.dev/PROJECT/REPOSITORY \
+#     --cloud-run-project=PROJECT --cloud-run-location=REGION
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: <%= it.service %>
+build:
+  artifacts:
+    - image: <%= it.service %>
+      docker:
+        dockerfile: Dockerfile
+manifests:
+  rawYaml:
+    - deploy/cloudrun/service.yaml
+deploy:
+  cloudrun: {}

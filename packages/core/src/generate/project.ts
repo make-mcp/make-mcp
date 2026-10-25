@@ -329,16 +329,25 @@ export async function generateProject(resolved: ResolvedIntake, options: Generat
     envVars,
     secretVars: envVars.filter((v) => v.secret || v.required),
     run,
+    generator: manifest.generator,
+    deploy: resolved.deploy === "cloudrun",
+    service: `${resolved.slug}-mcp`,
+    secrets: envVars.filter((v) => v.secret).map((v) => ({ env: v.name, secret: `${resolved.slug}-mcp-${v.name.toLowerCase().replace(/_/g, "-")}` })),
+    plainVars: envVars.filter((v) => !v.secret),
   };
 
   const lang = resolved.language;
   const files: Record<string, string> = {
     "README.md": tidy(eta.render(`${lang}/README.md.eta`, view)),
     ".gitignore": readFileSync(join(templatesDir, lang, "gitignore"), "utf8"),
-    Dockerfile: readFileSync(join(templatesDir, lang, "Dockerfile"), "utf8"),
+    Dockerfile: tidy(eta.render(`${lang}/Dockerfile.eta`, view)),
     "data/manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
   };
   if (envVars.length > 0) files[".env.example"] = eta.render("_partials/env.eta", view);
+  if (resolved.deploy === "cloudrun") {
+    files["deploy/cloudrun/service.yaml"] = tidy(eta.render("cloudrun/service.yaml.eta", view));
+    files["skaffold.yaml"] = eta.render("cloudrun/skaffold.yaml.eta", view);
+  }
   if (spec) files["data/api.json"] = `${JSON.stringify(spec, null, 2)}\n`;
   if (corpus && contentMode === "embedded") files["data/corpus.json"] = `${JSON.stringify(corpus)}\n`;
 

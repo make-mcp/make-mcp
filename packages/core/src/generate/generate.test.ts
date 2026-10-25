@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -6,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { parse as parseYaml } from "yaml";
 import { afterAll, describe, expect, it } from "vitest";
 import { detectContext } from "../discover/detect.js";
 import { isMakeMcpError } from "../errors.js";
@@ -243,5 +245,63 @@ describe("hostPath", () => {
       delete process.env.MAKE_MCP_HOST_WORKSPACE;
     }
     expect(hostPath("/workspace/a", "/workspace")).toBe("/workspace/a");
+  });
+});
+
+describe("Cloud Run deployment templates", async () => {
+  const findings = await detectContext({
+    target: "https://petstore3.example.com/openapi.yaml",
+    workspaceRoot: fixtures("workspaces/empty"),
+    apiFetcher,
+    contentFetcher,
+  });
+  const resolved = resolveIntake(findings, { language: "ts", register: "none", transport: "http", outDir: join(e2eRoot, "petstore-http-mcp") });
+  const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
+  writeProject(project);
+
+  it("adds a Knative service with Secret Manager references and a Skaffold config", () => {
+    expect(resolved.deploy).toBe("cloudrun");
+    const service = parseYaml(project.files["deploy/cloudrun/service.yaml"]!);
+    expect(service).toMatchObject({ apiVersion: "serving.knative.dev/v1", kind: "Service", metadata: { name: "swagger-petstore-mcp" } });
+    const container = service.spec.template.spec.containers[0];
+    expect(container.env.map((e: { name: string; valueFrom: { secretKeyRef: { name: string } } }) => `${e.name}=${e.valueFrom.secretKeyRef.name}`)).toEqual([
+      "MCP_AUTH_TOKEN=swagger-petstore-mcp-auth-token",
+      "SWAGGER_PETSTORE_ACCESS_TOKEN=swagger-petstore-mcp-swagger-petstore-access-token",
+      "SWAGGER_PETSTORE_API_KEY=swagger-petstore-mcp-swagger-petstore-api-key",
+    ]);
+    expect(service.spec.template.metadata.annotations["autoscaling.knative.dev/minScale"]).toBe("0");
+    expect(parseYaml(project.files["skaffold.yaml"]!)).toMatchObject({ manifests: { rawYaml: ["deploy/cloudrun/service.yaml"] }, deploy: { cloudrun: {} } });
+    expect(project.files["README.md"]).toContain("## Deploy to Google Cloud Run");
+    expect(project.files["README.md"]).toContain("--set-secrets MCP_AUTH_TOKEN=swagger-petstore-mcp-auth-token:latest,SWAGGER_PETSTORE_ACCESS_TOKEN=");
+  });
+
+  it("refuses to listen publicly without MCP_AUTH_TOKEN", () => {
+    const result = spawnSync(process.execPath, [join(project.outDir, "src/index.ts")], {
+      env: { ...process.env, MCP_TRANSPORT: "http", HOST: "0.0.0.0", PORT: "0", MCP_AUTH_TOKEN: "" },
+      encoding: "utf8",
+      timeout: 20_000,
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Refusing to listen on 0.0.0.0 without MCP_AUTH_TOKEN");
+  });
+
+  it("has no deployment files for stdio servers", async () => {
+    const stdio = resolveIntake(findings, { language: "ts", register: "none", outDir: join(e2eRoot, "petstore-stdio-mcp") });
+    expect(stdio.deploy).toBe("none");
+    const files = (await generateProject(stdio, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now })).files;
+    expect(Object.keys(files)).not.toContain("skaffold.yaml");
+  });
+});
+
+describe("Dockerfile for docs that must not be redistributed", async () => {
+  const findings = await detectContext({ target: "daisyUI", workspaceRoot: fixtures("workspaces/daisyui"), apiFetcher, contentFetcher });
+  const resolved = { ...resolveIntake(findings, { mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-restricted-mcp") }), license: "LicenseRef-Proprietary" };
+
+  it.each(["ts", "py"] as const)("downloads the docs while building the %s image", async (language) => {
+    const project = await generateProject({ ...resolved, language }, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
+    expect(project.manifest.docs?.contentMode).toBe("fetch-on-install");
+    expect(project.files["data/corpus.json"]).toBeUndefined();
+    expect(project.files.Dockerfile).toContain("refresh .");
+    expect(project.files.Dockerfile).toContain("Keep the image in a private registry");
   });
 });

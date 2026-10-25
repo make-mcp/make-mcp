@@ -56,6 +56,8 @@ export const IntakeAnswersSchema = z
     register: z.enum(["project", "global", "none"]),
     /** API tool layout; not asked – defaults to "grouped" above 40 operations. */
     tools: z.enum(["endpoints", "grouped"]),
+    /** Deployment templates; not asked – defaults to "cloudrun" for the HTTP transport. */
+    deploy: z.enum(["none", "cloudrun"]),
   })
   .partial();
 export type IntakeAnswers = z.infer<typeof IntakeAnswersSchema>;
@@ -99,6 +101,7 @@ export interface ResolvedIntake {
   register: "project" | "global" | "none";
   /** Explicit API tool layout; undefined lets the generator pick by operation count. */
   toolMode?: ToolMode;
+  deploy: "none" | "cloudrun";
   repositoryUrl?: string;
   homepage?: string;
   description?: string;

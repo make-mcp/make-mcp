@@ -59,6 +59,7 @@ export function resolveIntake(findings: Findings, answers: IntakeAnswers, option
     ...(scopeTags ? { scopeTags } : {}),
     language: filled.language ?? findings.language?.value ?? "ts",
     transport: filled.transport ?? "stdio",
+    deploy: filled.deploy ?? (filled.transport === "http" ? "cloudrun" : "none"),
     outDir: filled.outDir ?? defaultOutDir(findings),
     register: filled.register ?? "none",
     ...(filled.tools ? { toolMode: filled.tools } : {}),
@@ -86,6 +87,7 @@ export function summarizeIntake(resolved: ResolvedIntake): string {
     `License:     ${resolved.license ?? "unknown"} → docs ${contentMode === "embedded" ? "embedded in the server" : "fetched on first start (not redistributed)"}`,
     `Output:      ${resolved.language === "ts" ? "TypeScript" : "Python"}, ${resolved.transport}, ${resolved.outDir}`,
     `Register:    ${resolved.register}`,
+    ...(resolved.deploy === "cloudrun" ? ["Deploy:      Google Cloud Run templates (service.yaml, skaffold.yaml)"] : []),
     ...resolved.notes.map((n) => `Note:        ${n}`),
   ];
   return lines.join("\n");
