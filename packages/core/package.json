@@ -1,6 +1,6 @@
 {
   "name": "@make-mcp/core",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Discovery, intake and code generation for make-mcp",
   "license": "Apache-2.0",
   "type": "module",
