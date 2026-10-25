@@ -31,11 +31,30 @@ Two kinds of servers, combinable:
 
 | Mode | Source | Tools |
 |---|---|---|
-| `docs` | llms-full.txt → llms.txt → repo docs at the version tag → website → README → local checkout | `search_docs`, `get_page`, `list_topics`, `get_component`; one resource per page |
+| `docs` | llms-full.txt → llms.txt → repo docs at the version tag → website → README → local checkout | `search_docs`, `get_page`, `list_topics`, `get_component`, `changes_since`, `get_signature`; one resource per page |
 | `api` | OpenAPI 3.x / Swagger 2.0, or prose API docs (extracted by an LLM, see below) | one tool per operation (with read-only/destructive hints), GET resources, auth via env vars, version via path/header/query; above 40 operations three tools instead: `list_operations`, `describe_operation`, `call_operation` |
+
+Docs servers also get two tools when the data exists:
+
+- **`changes_since`** – release notes after a version (GitHub releases, or the project's CHANGELOG), plus links to
+  migration guides in the docs. Ask "what changes if I upgrade from 4.5 to 4.6?" before you bump a dependency.
+- **`get_signature`** – exact signatures and doc comments of exported functions, classes and types, read from the
+  package installed in your project (`.d.ts` files, `@types/*`, Python stubs and sources). Only taken when the
+  installed version is exactly the one the server is for; nothing is executed.
 
 Versions are read from npm lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`) and Python projects
 (`uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, a local `.venv`, `requirements*.txt`, `pyproject.toml`).
+
+### One server for the whole project
+
+If the library is one of several dependencies, make-mcp asks whether you want a server only for it or one for the
+libraries of the whole project – each in the version your lockfile pins, with its own sources, license handling,
+release notes and signatures. The tools take an optional `library` parameter. Start with the whole project directly:
+
+```bash
+npx @make-mcp/cli create .                         # all direct dependencies (build tooling is skipped)
+npx @make-mcp/cli create react --libraries react,next,zod
+```
 
 ### APIs without an OpenAPI spec
 
@@ -120,6 +139,7 @@ Everything that can be detected is detected; the rest is asked (max. 4 questions
 
 | Question | Asked when |
 |---|---|
+| Only this library or the whole project? | the target is one of several dependencies (asked first) |
 | Where are the docs / the spec? | nothing found |
 | Is the source code accessible (repo URL, local path)? | no repository and no docs found |
 | Which version? | not exact in a lockfile |

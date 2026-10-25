@@ -184,6 +184,8 @@ function renderFindings(f) {
     ["catalog", f.catalog],
     ["docs", f.docsSources.join("\n")],
     ["openapi", f.openapi && `${f.openapi.url} (${f.openapi.endpointCount} operations)`],
+    ["libraries", f.libraries && f.libraries.map((l) => `${l.name} ${l.version ?? ""}`.trim()).join("\n")],
+    ["project", !f.libraries && f.projectLibraries && f.projectLibraries.length ? `also uses ${f.projectLibraries.join(", ")}` : ""],
     ["notes", f.notes.join("\n")],
   ];
   $("findings").replaceChildren(...rows.filter(([, v]) => v).flatMap(([k, v]) => [el("dt", k), el("dd", v)]));
@@ -217,7 +219,7 @@ function renderQuestions(questions) {
       input.value = "__other";
       const free = el("input");
       free.type = "text";
-      free.placeholder = "Other: URL, path or version";
+      free.placeholder = q.id === "bundle" ? "Other: package names, comma-separated" : "Other: URL, path or version";
       free.setAttribute("aria-label", `${q.question} – other`);
       free.addEventListener("focus", () => (input.checked = true));
       label.append(input, free);
@@ -257,6 +259,8 @@ async function generate() {
     ["folder", r.outDir],
     ["docs pages", r.docPages || ""],
     ["operations", r.endpoints || ""],
+    ["releases", r.releases ? `${r.releases} (changes_since)` : ""],
+    ["signatures", r.signatures ? `${r.signatures} (get_signature)` : ""],
     ["docs", r.contentMode && (r.contentMode === "embedded" ? "embedded" : "downloaded on install (license)")],
     ["env vars", r.envVars.map((v) => `${v.name} – ${v.description}`).join("\n")],
   ];
@@ -288,7 +292,9 @@ $("target-form").addEventListener("submit", (event) => {
 $("questions-form").addEventListener("submit", (event) => {
   event.preventDefault();
   busy(event.submitter, "Saving…", async () => {
-    const result = await call("answer", { sessionId: session, answers: collectAnswers() });
+    const answers = collectAnswers();
+    const result = await call("answer", { sessionId: session, answers });
+    if (answers.bundle && answers.bundle !== "single") renderFindings(result.findings);
     if (!result.ready) return renderQuestions(result.questions);
     $("step-questions").hidden = true;
     await showPlan();

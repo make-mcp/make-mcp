@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ChangeEntrySchema } from "./library.js";
 import { SourceRefSchema } from "./source.js";
 
 export const DocPageSchema = z.object({
@@ -18,5 +19,7 @@ export const DocCorpusSchema = z.object({
   license: z.string().optional(),
   pages: z.array(DocPageSchema),
   sources: z.array(SourceRefSchema),
+  /** Release notes of the library (GitHub releases or CHANGELOG), oldest first. */
+  changes: z.array(ChangeEntrySchema).optional(),
 });
 export type DocCorpus = z.infer<typeof DocCorpusSchema>;

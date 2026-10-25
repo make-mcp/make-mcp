@@ -4,23 +4,64 @@ import { IntakeAnswersSchema, type Findings, type IntakeAnswers, type Mode, type
 const SCOPE_THRESHOLD = 40;
 export const MAX_QUESTIONS_PER_ROUND = 4;
 
+/** "single", "project" or a comma-separated list of package names. */
+export function bundleChoice(findings: Findings, answers: IntakeAnswers): string {
+  return answers.bundle ?? findings.bundle?.value ?? "single";
+}
+
+/** One server for several of the project's libraries instead of only the target. */
+export function isBundle(findings: Findings, answers: IntakeAnswers): boolean {
+  return bundleChoice(findings, answers).toLowerCase() !== "single";
+}
+
 export function effectiveMode(findings: Findings, answers: IntakeAnswers): Mode {
+  // A whole-project server is about knowledge; API actions stay per-product servers.
+  if (isBundle(findings, answers)) return "docs";
   return answers.mode ?? findings.mode.value;
 }
 
 const needsApi = (mode: Mode) => mode === "api" || mode === "both";
 const needsDocs = (mode: Mode) => mode === "docs" || mode === "both";
 
-export function defaultOutDir(findings: Findings): string {
-  return `mcp-servers/${findings.slug}-mcp`;
+export function defaultOutDir(findings: Findings, answers: IntakeAnswers = {}): string {
+  return `mcp-servers/${isBundle(findings, answers) ? projectSlug(findings) : findings.slug}-mcp`;
+}
+
+/** Name of a whole-project server, e.g. "my-app-libs". */
+export function projectSlug(findings: Findings): string {
+  const base = (findings.projectName ?? findings.workspaceRoot.split(/[\\/]/).pop() ?? "project")
+    .toLowerCase()
+    .replace(/^@[^/]+\//, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${base || "project"}-libs`;
 }
 
 /** Builds a question when it is still open; returns undefined when it is answered or confidently detected. */
 function buildQuestion(id: QuestionId, findings: Findings, answers: IntakeAnswers): Question | undefined {
   if (answers[id] !== undefined) return undefined;
   const mode = effectiveMode(findings, answers);
+  // Each library of a whole-project server brings its own sources and version.
+  if (isBundle(findings, answers) && (id === "docsSource" || id === "codeSource" || id === "version" || id === "mode")) return undefined;
 
   switch (id) {
+    case "bundle": {
+      const others = findings.projectDeps ?? [];
+      if (findings.bundle || others.length === 0) return undefined;
+      const names = [findings.packageName ?? findings.target, ...others.map((d) => d.name)];
+      const shown = names.slice(0, 6).join(", ") + (names.length > 6 ? `, … (${names.length})` : "");
+      return {
+        id,
+        header: "Coverage",
+        question: `One MCP server only for ${findings.target}, or one for the libraries of the whole project?`,
+        options: [
+          { value: "single", label: `Only ${findings.target}`, description: "A server for this library" },
+          { value: "project", label: "Whole project", description: `One server for ${shown}, each in its installed version` },
+        ],
+        default: "single",
+        allowFreeText: true,
+      };
+    }
     case "docsSource": {
       const missingDocs = needsDocs(mode) && findings.docsCandidates.length === 0;
       const missingSpec = needsApi(mode) && !findings.openapi;
@@ -152,13 +193,14 @@ function buildQuestion(id: QuestionId, findings: Findings, answers: IntakeAnswer
   }
 }
 
-const ORDER: QuestionId[] = ["docsSource", "codeSource", "version", "mode", "auth", "scope", "language", "register"];
+const ORDER: QuestionId[] = ["bundle", "docsSource", "codeSource", "version", "mode", "auth", "scope", "language", "register"];
 
 /** Open questions in priority order; only what cannot be detected with confidence. */
 export function nextQuestions(findings: Findings, answers: IntakeAnswers, max = MAX_QUESTIONS_PER_ROUND): Question[] {
-  return ORDER.map((id) => buildQuestion(id, findings, answers))
-    .filter((q): q is Question => q !== undefined)
-    .slice(0, max);
+  const open = ORDER.map((id) => buildQuestion(id, findings, answers)).filter((q): q is Question => q !== undefined);
+  // The coverage decides which other questions apply (a project server has no purpose/version/source questions).
+  if (open[0]?.id === "bundle" && max !== Infinity) return [open[0]];
+  return open.slice(0, max);
 }
 
 /**

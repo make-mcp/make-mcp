@@ -45,9 +45,9 @@ describe("make-mcp ui", () => {
 
     const detected = await (await api("detect", { target: "daisyUI" })).json();
     expect(detected.findings.version.value).toBe("5.7.50");
-    expect(detected.questions.map((q: { id: string }) => q.id)).toEqual(["mode", "register"]);
+    expect(detected.questions.map((q: { id: string }) => q.id)).toEqual(["bundle"]);
 
-    const answered = await (await api("answer", { sessionId: detected.sessionId, answers: { mode: "docs", register: "none" } })).json();
+    const answered = await (await api("answer", { sessionId: detected.sessionId, answers: { bundle: "single", mode: "docs", register: "none" } })).json();
     expect(answered.ready).toBe(true);
 
     const plan = await (await api("preview", { sessionId: detected.sessionId })).json();

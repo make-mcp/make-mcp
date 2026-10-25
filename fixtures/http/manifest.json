@@ -10,5 +10,12 @@
   "https://notes.example.com/": { "file": "files/notes-home.html", "contentType": "text/html; charset=utf-8" },
   "https://notes.example.com/llms-full.txt": { "file": "files/notes-llms-full.txt", "contentType": "text/plain; charset=utf-8" },
   "https://raw.githubusercontent.com/make-mcp/catalog/main/index.json": { "file": "files/catalog-index.json", "contentType": "application/json" },
-  "https://raw.githubusercontent.com/make-mcp/catalog/main/entries/notes.json": { "file": "files/catalog-notes.json", "contentType": "application/json" }
+  "https://raw.githubusercontent.com/make-mcp/catalog/main/entries/notes.json": { "file": "files/catalog-notes.json", "contentType": "application/json" },
+  "https://registry.npmjs.org/acme-ui/latest": { "file": "files/npm-acme-ui-latest.json", "contentType": "application/json" },
+  "https://registry.npmjs.org/acme-ui/2.0.0": { "file": "files/npm-acme-ui-2.0.0.json", "contentType": "application/json" },
+  "https://api.github.com/repos/acme/acme-ui/tags?per_page=100": { "file": "files/github-acme-ui-tags.json", "contentType": "application/json" },
+  "https://api.github.com/repos/acme/acme-ui/releases?per_page=100&page=1": { "file": "files/github-acme-ui-releases.json", "contentType": "application/json" },
+  "https://acme-ui.example.com/": { "file": "files/acme-ui-home.html", "contentType": "text/html; charset=utf-8" },
+  "https://acme-ui.example.com/llms-full.txt": { "file": "files/acme-ui-llms-full.txt", "contentType": "text/plain; charset=utf-8" },
+  "https://api.github.com/repos/limited/lib/releases?per_page=100&page=1": { "status": 403, "contentType": "application/json" }
 }

@@ -9,7 +9,8 @@ export const SERVER_VERSION = "0.4.1";
 const log = pino({ name: "make-mcp", level: process.env.LOG_LEVEL ?? "info" }, pino.destination(2));
 
 const FLOW = `Workflow (follow it in order, talk to the user in their language):
-1. detect_context with the target the user named and workspace = absolute path of the user's project.
+1. detect_context with the target the user named (or "." for all libraries of the project) and workspace = absolute
+   path of the user's project.
 2. For each question from detect_context/submit_answers: ask the user with your native question UI (max 4 at once),
    pre-select the "default" option, allow free text where allowFreeText is true. Never invent answers.
 3. submit_answers with the user's choices (option value or label). Repeat 2–3 until no questions remain.
@@ -57,9 +58,12 @@ export function createMakeMcpServer(options: ServerOptions = {}): McpServer {
     {
       title: "Detect target",
       description:
-        "Step 1. Detects everything that can be found automatically about the target (installed version, license, repository, docs, llms.txt, OpenAPI) and returns the questions that still need the user's input.",
+        "Step 1. Detects everything that can be found automatically about the target (installed version, license, repository, docs, llms.txt, OpenAPI) and returns the questions that still need the user's input. If the target is one of several dependencies, the `bundle` question offers one server for the libraries of the whole project.",
       inputSchema: {
-        target: z.string().min(1).describe("Package name, product name or URL (docs, llms.txt or OpenAPI spec)"),
+        target: z
+          .string()
+          .min(1)
+          .describe('Package name, product name or URL (docs, llms.txt or OpenAPI spec); "." for one server covering the libraries of the whole project'),
         workspace: z.string().optional().describe("Absolute path of the user's project (recommended; defaults to the server's working directory)"),
       },
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -192,7 +196,7 @@ export function createMakeMcpServer(options: ServerOptions = {}): McpServer {
     {
       title: "Create an MCP server",
       description: "Guided creation of an MCP server for a library, product or API",
-      argsSchema: { target: z.string().describe("What the MCP server should be for, e.g. daisyui or an OpenAPI URL") },
+      argsSchema: { target: z.string().describe('What the MCP server should be for, e.g. daisyui, an OpenAPI URL or "." for the whole project') },
     },
     ({ target }) => ({
       messages: [{ role: "user", content: { type: "text", text: `Create an MCP server for "${target}" with the make-mcp tools.\n\n${FLOW}` } }],

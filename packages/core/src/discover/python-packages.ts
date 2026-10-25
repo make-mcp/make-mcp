@@ -131,20 +131,30 @@ function fromPipfileLock(ws: Workspace, name: string): string | undefined {
   return undefined;
 }
 
+export interface DistInfo {
+  /** site-packages directory relative to the workspace. */
+  sitePackages: string;
+  /** `<name>-<version>.dist-info` directory name. */
+  distInfo: string;
+  version: string;
+}
+
 /** Looks for `<name>-<version>.dist-info` in a project-local virtualenv. */
-function fromSitePackages(ws: Workspace, name: string): string | undefined {
+export function findDistInfo(ws: Workspace, name: string): DistInfo | undefined {
   const wanted = normalizePythonName(name);
   for (const venv of [".venv", "venv", "env"]) {
     const sitePackages = [...ws.list(`${venv}/lib`).map((py) => `${venv}/lib/${py}/site-packages`), `${venv}/Lib/site-packages`];
     for (const dir of sitePackages) {
       for (const entry of ws.list(dir)) {
         const match = /^(.+)-([^-]+)\.dist-info$/.exec(entry);
-        if (match && normalizePythonName(match[1]!) === wanted) return match[2];
+        if (match && normalizePythonName(match[1]!) === wanted) return { sitePackages: dir, distInfo: entry, version: match[2]! };
       }
     }
   }
   return undefined;
 }
+
+const fromSitePackages = (ws: Workspace, name: string) => findDistInfo(ws, name)?.version;
 
 /** Lowest version a PEP 440 specifier allows, e.g. ">=2.1,<3" → "2.1", "~=1.4.2" → "1.4.2". */
 export function minimumPythonVersion(spec: string): string | undefined {

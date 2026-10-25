@@ -1,0 +1,13 @@
+{
+  "name": "acme-app",
+  "private": true,
+  "dependencies": {
+    "@acme/internal": "workspace:*",
+    "acme-ui": "^2.0.0",
+    "daisyui": "^5.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "@types/node": "^22.0.0"
+  }
+}

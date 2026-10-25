@@ -18,5 +18,5 @@ uv sync
 ## Regenerate
 
 ```bash
-npx @make-mcp/cli create <%= it.target %>
+npx @make-mcp/cli create <%= it.regenerate %>
 ```

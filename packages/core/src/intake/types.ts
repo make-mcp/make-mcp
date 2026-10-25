@@ -18,6 +18,12 @@ export type Mode = "docs" | "api" | "both";
 /** One MCP tool per operation, or three meta tools (list/describe/call) for large APIs. */
 export type ToolMode = "endpoints" | "grouped";
 
+/** A direct dependency of the workspace that could become part of a whole-project server. */
+export interface ProjectDependency {
+  name: string;
+  registry: "npm" | "pypi";
+}
+
 export interface Findings {
   target: string;
   slug: string;
@@ -41,6 +47,14 @@ export interface Findings {
   notes: string[];
   /** Community catalog entry whose answers pre-fill the intake. */
   catalog?: CatalogEntry;
+  /** The workspace's other direct dependencies (cheap, no network): offered as one server for the whole project. */
+  projectDeps?: ProjectDependency[];
+  /** Name of the workspace project (package.json / pyproject.toml), used to name a whole-project server. */
+  projectName?: string;
+  /** Pre-set coverage, e.g. "project" when the target was "." */
+  bundle?: Finding<string>;
+  /** Detected libraries of a whole-project server, the target first (filled after the bundle answer). */
+  members?: Findings[];
 }
 
 export const IntakeAnswersSchema = z
@@ -62,6 +76,8 @@ export const IntakeAnswersSchema = z
     tools: z.enum(["endpoints", "grouped"]),
     /** Deployment templates; not asked – defaults to "cloudrun" for the HTTP transport. */
     deploy: z.enum(["none", "cloudrun"]),
+    /** "single" (only the target), "project" (all direct dependencies) or comma-separated package names. */
+    bundle: z.string().min(1).max(2000),
   })
   .partial();
 export type IntakeAnswers = z.infer<typeof IntakeAnswersSchema>;
@@ -82,6 +98,19 @@ export interface Question {
   default?: string;
   /** Free text (URL, path, version) is accepted in addition to the options. */
   allowFreeText: boolean;
+}
+
+/** One library of a generated server: the target itself, or each member of a whole-project server. */
+export interface ResolvedLibrary {
+  /** Slug, unique within the server; prefixes page paths in whole-project servers. */
+  name: string;
+  title: string;
+  version: string;
+  packageName?: string;
+  registry?: "npm" | "pypi";
+  license?: string;
+  docs: DocsSource[];
+  repositoryUrl?: string;
 }
 
 export interface ResolvedIntake {
@@ -109,5 +138,11 @@ export interface ResolvedIntake {
   repositoryUrl?: string;
   homepage?: string;
   description?: string;
+  packageName?: string;
+  registry?: "npm" | "pypi";
+  /** The user's project; its installed packages provide the API signatures. */
+  sourceRoot?: string;
+  /** Whole-project server: one docs server for several libraries (mode is "docs"). */
+  libraries?: ResolvedLibrary[];
   notes: string[];
 }

@@ -9,12 +9,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { parse as parseYaml } from "yaml";
 import { afterAll, describe, expect, it } from "vitest";
-import { detectContext } from "../discover/detect.js";
+import { detectContext, refineFindings } from "../discover/detect.js";
 import { isMakeMcpError } from "../errors.js";
 import { createFixtureFetch } from "../fetch/fixture-fetch.js";
 import { createPoliteFetch } from "../fetch/polite-fetch.js";
 import { resolveIntake } from "../intake/resolve.js";
-import { generateProject, hostPath, writeProject, zipProject } from "./project.js";
+import { generateProject, hostPath, refreshDocs, writeProject, zipProject } from "./project.js";
 import { applyRegistration, planRegistration } from "./register.js";
 
 const fixtures = (path: string) => fileURLToPath(new URL(`../../../../fixtures/${path}`, import.meta.url));
@@ -46,7 +46,7 @@ const firstText = (result: Awaited<ReturnType<Client["callTool"]>>) =>
 
 describe("daisyUI docs server (TypeScript)", async () => {
   const findings = await detectContext({ target: "daisyUI", workspaceRoot: fixtures("workspaces/daisyui"), apiFetcher, contentFetcher });
-  const resolved = resolveIntake(findings, { mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-mcp") });
+  const resolved = resolveIntake(findings, { bundle: "single", mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-mcp") });
   const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
   writeProject(project);
 
@@ -101,6 +101,114 @@ describe("daisyUI docs server (TypeScript)", async () => {
       caught = err;
     }
     expect(isMakeMcpError(caught, "OUTPUT_NOT_EMPTY")).toBe(true);
+  });
+});
+
+describe("whole-project server (TypeScript)", async () => {
+  const workspaceRoot = fixtures("workspaces/project");
+  const detected = await detectContext({ target: ".", workspaceRoot, apiFetcher, contentFetcher });
+  const findings = await refineFindings(detected, {}, [], { apiFetcher, contentFetcher });
+  const resolved = resolveIntake(findings, { register: "none", outDir: join(e2eRoot, "acme-app-libs-mcp") });
+  const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
+  writeProject(project);
+
+  it("serves every library from its own corpus, with release notes and signatures", () => {
+    expect(project.manifest.libraries?.map((l) => [l.name, l.version, l.contentMode])).toEqual([
+      ["acme-ui", "2.0.0", "embedded"],
+      ["daisyui", "5.7.50", "embedded"],
+    ]);
+    expect(project.manifest.docs).toBeUndefined();
+    expect(Object.keys(project.files)).toEqual(expect.arrayContaining(["data/corpus/acme-ui.json", "data/corpus/daisyui.json", "data/symbols.json"]));
+    expect(project.tools).toEqual(["search_docs", "get_page", "list_topics", "get_component", "changes_since", "get_signature"]);
+    expect(project.files["README.md"]).toContain("| acme-ui (`acme-ui`) | 2.0.0 |");
+    expect(project.files["README.md"]).toContain("npx @make-mcp/cli create .");
+  });
+
+  it("answers per library", async () => {
+    const client = await connect(project.outDir);
+    try {
+      const { tools } = await client.listTools();
+      expect((tools.find((t) => t.name === "search_docs")!.inputSchema.properties as Record<string, { enum?: string[] }>).library?.enum).toEqual([
+        "acme-ui",
+        "daisyui",
+      ]);
+
+      const overview = firstText(await client.callTool({ name: "list_topics", arguments: {} }));
+      expect(overview).toContain("- acme-ui 2.0.0 — library `acme-ui`");
+      expect(overview).toContain("release notes, signatures");
+      expect(firstText(await client.callTool({ name: "list_topics", arguments: { library: "acme-ui" } }))).toContain("`acme-ui/button`");
+
+      const hits = firstText(await client.callTool({ name: "search_docs", arguments: { query: "button", library: "daisyui" } }));
+      expect(hits).toContain("path: daisyui/components/button");
+      expect(hits).not.toContain("acme-ui/");
+      expect(firstText(await client.callTool({ name: "get_page", arguments: { path: "acme-ui/button" } }))).toContain("ghost");
+
+      const unknown = await client.callTool({ name: "search_docs", arguments: { query: "x", library: "vue" } });
+      expect(unknown.isError).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("lists release notes after the installed version, with migration guides", async () => {
+    const client = await connect(project.outDir);
+    try {
+      const upgrade = firstText(await client.callTool({ name: "changes_since", arguments: { library: "acme-ui" } }));
+      expect(upgrade).toContain("# acme-ui: 2 releases after 2.0.0");
+      expect(upgrade).toContain("## 2.1.0 – Ghost buttons (2026-06-01)");
+      expect(upgrade).toContain("Button` no longer accepts a label string");
+      expect(upgrade).toContain("Migrating to v3 — `acme-ui/migrating-to-v3`");
+      expect(upgrade).not.toContain("1.9.0");
+
+      const range = firstText(await client.callTool({ name: "changes_since", arguments: { library: "acme-ui", version: "v2.1.0", to: "3.0.0" } }));
+      expect(range).toContain("1 release after 2.1.0 up to 3.0.0");
+      expect(firstText(await client.callTool({ name: "changes_since", arguments: { library: "acme-ui", version: "3.0.0" } }))).toContain(
+        "Newest known: 3.0.0",
+      );
+      // An empty version means the default, as in the Python server.
+      expect(firstText(await client.callTool({ name: "changes_since", arguments: { library: "acme-ui", version: "" } }))).toContain("2 releases after 2.0.0");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("returns exact signatures from the installed package", async () => {
+    const client = await connect(project.outDir);
+    try {
+      const theme = firstText(await client.callTool({ name: "get_signature", arguments: { name: "createTheme" } }));
+      expect(theme).toContain("## createTheme (function, acme-ui)");
+      expect(theme).toContain("function createTheme(tokens?: Partial<Theme>): Theme;");
+      expect(theme).toContain("@param tokens");
+      expect(firstText(await client.callTool({ name: "get_signature", arguments: { name: "ButtonProps.onClick" } }))).toContain("interface ButtonProps");
+      expect(firstText(await client.callTool({ name: "get_signature", arguments: { name: "load" } }))).toContain("## icons.load (function, acme-ui)");
+      expect(firstText(await client.callTool({ name: "get_signature", arguments: { name: "theme" } }))).toContain("interface Theme");
+      const miss = await client.callTool({ name: "get_signature", arguments: { name: "them" } });
+      expect(miss.isError).toBe(true);
+      expect(firstText(miss)).toContain("Similar: Theme, createTheme");
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("single library with release notes and signatures (TypeScript)", async () => {
+  const findings = await detectContext({ target: "acme-ui", workspaceRoot: fixtures("workspaces/project"), apiFetcher, contentFetcher });
+  const resolved = resolveIntake(findings, { bundle: "single", mode: "docs", register: "none", outDir: join(e2eRoot, "acme-ui-mcp") });
+  const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
+  writeProject(project);
+
+  it("defaults changes_since to the generated version", async () => {
+    expect(project.tools).toEqual(["search_docs", "get_page", "list_topics", "changes_since", "get_signature"]);
+    expect(project.manifest.docs?.changes).toEqual({ repository: "https://github.com/acme/acme-ui", packageName: "acme-ui" });
+    const client = await connect(project.outDir);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.find((t) => t.name === "search_docs")!.inputSchema.properties).not.toHaveProperty("library");
+      expect(firstText(await client.callTool({ name: "changes_since", arguments: {} }))).toContain("2 releases after 2.0.0");
+      expect(firstText(await client.callTool({ name: "get_signature", arguments: { name: "Button" } }))).toContain("## Button (function)\nmodule: dist/button.d.ts");
+    } finally {
+      await client.close();
+    }
   });
 });
 
@@ -300,7 +408,7 @@ describe("Cloud Run deployment templates", async () => {
 
 describe("Dockerfile for docs that must not be redistributed", async () => {
   const findings = await detectContext({ target: "daisyUI", workspaceRoot: fixtures("workspaces/daisyui"), apiFetcher, contentFetcher });
-  const resolved = { ...resolveIntake(findings, { mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-restricted-mcp") }), license: "LicenseRef-Proprietary" };
+  const resolved = { ...resolveIntake(findings, { bundle: "single", mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-restricted-mcp") }), license: "LicenseRef-Proprietary" };
 
   it.each(["ts", "py"] as const)("downloads the docs while building the %s image", async (language) => {
     const project = await generateProject({ ...resolved, language }, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
@@ -313,7 +421,7 @@ describe("Dockerfile for docs that must not be redistributed", async () => {
 
 describe("generated HTTP server without a token", async () => {
   const findings = await detectContext({ target: "daisyUI", workspaceRoot: fixtures("workspaces/daisyui"), apiFetcher, contentFetcher });
-  const resolved = resolveIntake(findings, { mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-http-mcp") });
+  const resolved = resolveIntake(findings, { bundle: "single", mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-http-mcp") });
   const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
   writeProject(project);
 
@@ -349,3 +457,49 @@ describe("generated HTTP server without a token", async () => {
   });
 });
 
+
+describe("refresh of a whole-project server", () => {
+  it("downloads every library it can and reports the others", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "make-mcp-refresh-"));
+    const cache = mkdtempSync(join(tmpdir(), "make-mcp-cache-"));
+    const previous = process.env.MAKE_MCP_CACHE_DIR;
+    process.env.MAKE_MCP_CACHE_DIR = cache;
+    try {
+      mkdirSync(join(dir, "data"));
+      const library = (name: string, url: string) => ({
+        name,
+        title: name,
+        version: "2.0.0",
+        contentMode: "fetch-on-install",
+        sources: [],
+        candidates: [{ kind: "llms-full-txt", url }],
+      });
+      writeFileSync(
+        join(dir, "data/manifest.json"),
+        JSON.stringify({
+          name: "app-libs",
+          title: "app libraries",
+          targetVersion: "project",
+          envPrefix: "APP_LIBS",
+          transport: "stdio",
+          generator: "@make-mcp/cli@0.0.0",
+          generatedAt: "2026-10-25T10:00:00Z",
+          libraries: [
+            { ...library("acme-ui", "https://acme-ui.example.com/llms-full.txt"), changes: { repository: "https://github.com/acme/acme-ui", packageName: "acme-ui" } },
+            library("gone", "https://gone.example.com/llms-full.txt"),
+          ],
+        }),
+      );
+      const result = await refreshDocs(dir, { apiFetcher, contentFetcher });
+      expect(result).toMatchObject({ libraries: 2, failed: ["gone"], skipped: false });
+      const cached = JSON.parse(readFileSync(join(cache, "acme-ui", "2.0.0", "corpus.json"), "utf8"));
+      expect(cached.pages.length).toBeGreaterThan(0);
+      expect(cached.changes.map((c: { version: string }) => c.version)).toContain("3.0.0");
+    } finally {
+      if (previous === undefined) delete process.env.MAKE_MCP_CACHE_DIR;
+      else process.env.MAKE_MCP_CACHE_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(cache, { recursive: true, force: true });
+    }
+  });
+});

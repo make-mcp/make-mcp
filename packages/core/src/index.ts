@@ -8,9 +8,29 @@ export { createPoliteFetch, type PoliteFetchOptions } from "./fetch/polite-fetch
 export { createFixtureFetch } from "./fetch/fixture-fetch.js";
 export type { Fetcher, FetchInit, FetchResult } from "./fetch/types.js";
 export { createWorkspace, type Workspace } from "./fs/workspace.js";
-export { detectContext, applySourceAnswers, type DetectOptions, type RefineOptions } from "./discover/detect.js";
+export {
+  detectContext,
+  applySourceAnswers,
+  expandBundle,
+  refineFindings,
+  projectDependencies,
+  MAX_PROJECT_LIBRARIES,
+  type DetectOptions,
+  type RefineOptions,
+} from "./discover/detect.js";
+export { readSignatures, scanTypeDeclarations, scanPythonSource, type SignatureResult, type SignatureTarget } from "./discover/signatures.js";
+export { loadChanges, parseChangelog, tagVersion, compareVersions } from "./parse/changes.js";
 export * from "./intake/types.js";
-export { nextQuestions, normalizeAnswers, effectiveMode, defaultOutDir, MAX_QUESTIONS_PER_ROUND } from "./intake/questions.js";
+export {
+  nextQuestions,
+  normalizeAnswers,
+  effectiveMode,
+  defaultOutDir,
+  bundleChoice,
+  isBundle,
+  projectSlug,
+  MAX_QUESTIONS_PER_ROUND,
+} from "./intake/questions.js";
 export { resolveIntake, summarizeIntake, envPrefixFor, type ResolveOptions } from "./intake/resolve.js";
 export { loadDocCorpus, type DocsSource, type LoadCorpusOptions } from "./parse/docs-corpus.js";
 export { openApiToSpec, parseApiDocument, applyRequestedVersion } from "./parse/openapi.js";
@@ -20,6 +40,8 @@ export {
   writeProject,
   zipProject,
   refreshDocs,
+  manifestLibraries,
+  needsRefresh,
   corpusCachePath,
   cacheRoot,
   insideCache,
@@ -33,6 +55,8 @@ export {
   type GenerateOptions,
   type GeneratedProject,
   type Manifest,
+  type LibraryManifest,
+  type ChangesSource,
   type EnvVar,
   type RefreshOptions,
 } from "./generate/project.js";

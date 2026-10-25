@@ -1,7 +1,7 @@
 import { MakeMcpError } from "../errors.js";
 import { contentModeFor } from "../license.js";
-import { defaultOutDir, effectiveMode, nextQuestions } from "./questions.js";
-import type { Findings, IntakeAnswers, ResolvedIntake } from "./types.js";
+import { defaultOutDir, effectiveMode, isBundle, nextQuestions, projectSlug } from "./questions.js";
+import type { Findings, IntakeAnswers, ResolvedIntake, ResolvedLibrary } from "./types.js";
 
 export interface ResolveOptions {
   /** Fill open questions with their defaults (non-interactive `--yes`). */
@@ -23,6 +23,8 @@ export function resolveIntake(findings: Findings, answers: IntakeAnswers, option
   if (missing.length > 0) {
     throw new MakeMcpError("INTAKE_INCOMPLETE", `Open questions: ${missing.join(", ")}`, { missing });
   }
+
+  if (isBundle(findings, filled)) return resolveBundle(findings, filled);
 
   const mode = effectiveMode(findings, filled);
   const needsDocs = mode !== "api";
@@ -66,12 +68,70 @@ export function resolveIntake(findings: Findings, answers: IntakeAnswers, option
     ...(findings.repositoryUrl ? { repositoryUrl: findings.repositoryUrl.value } : {}),
     ...(findings.homepage ? { homepage: findings.homepage } : {}),
     ...(findings.description ? { description: findings.description } : {}),
+    ...(findings.packageName ? { packageName: findings.packageName } : {}),
+    ...(findings.registry ? { registry: findings.registry } : {}),
+    sourceRoot: findings.workspaceRoot,
     notes: findings.notes,
+  };
+}
+
+function libraryOf(f: Findings): ResolvedLibrary {
+  return {
+    name: f.slug,
+    title: f.target,
+    version: f.version?.value ?? "latest",
+    ...(f.packageName ? { packageName: f.packageName } : {}),
+    ...(f.registry ? { registry: f.registry } : {}),
+    ...(f.license ? { license: f.license.value } : {}),
+    docs: f.docsCandidates,
+    ...(f.repositoryUrl ? { repositoryUrl: f.repositoryUrl.value } : {}),
+  };
+}
+
+/** Whole-project server: one docs server for the detected libraries, each with its own version and sources. */
+function resolveBundle(findings: Findings, filled: IntakeAnswers): ResolvedIntake {
+  if (!findings.members?.length) {
+    throw new MakeMcpError("INTAKE_INCOMPLETE", "The project's libraries have not been detected yet (answer the bundle question first).", { missing: ["bundle"] });
+  }
+  const slug = projectSlug(findings);
+  const libraries = findings.members.map(libraryOf);
+  const loose = findings.members.filter((m) => m.version?.confidence !== "high").map((m) => `${m.target} ${m.version?.value ?? "latest"}`);
+  return {
+    target: `${findings.projectName ?? slug.replace(/-libs$/, "")} libraries`,
+    slug,
+    envPrefix: envPrefixFor(slug),
+    mode: "docs",
+    version: "project",
+    docs: [],
+    libraries,
+    sourceRoot: findings.workspaceRoot,
+    auth: "none",
+    language: filled.language ?? findings.language?.value ?? "ts",
+    transport: filled.transport ?? "stdio",
+    deploy: filled.deploy ?? (filled.transport === "http" ? "cloudrun" : "none"),
+    outDir: filled.outDir ?? defaultOutDir(findings, filled),
+    register: filled.register ?? "none",
+    notes: [...findings.notes, ...(loose.length ? [`No exact version in a lockfile for: ${loose.join(", ")} (using the closest match).`] : [])],
   };
 }
 
 /** Plain-text summary shown to the user for confirmation before anything is generated. */
 export function summarizeIntake(resolved: ResolvedIntake): string {
+  if (resolved.libraries) {
+    return [
+      `Target:      ${resolved.target} – one docs server for ${resolved.libraries.length} libraries`,
+      ...resolved.libraries.map((lib) => {
+        const source = lib.docs[0] ? `${lib.docs[0].kind}` : "no docs";
+        const mode = contentModeFor(lib.license) === "embedded" ? "embedded" : "fetched on first start";
+        return `  ${`${lib.title} ${lib.version}`.padEnd(30)} ${lib.license ?? "license unknown"}, ${source}, docs ${mode}`;
+      }),
+      `Tools:       search_docs, get_page, list_topics (per library), changes_since, get_signature where available`,
+      `Output:      ${resolved.language === "ts" ? "TypeScript" : "Python"}, ${resolved.transport}, ${resolved.outDir}`,
+      `Register:    ${resolved.register}`,
+      ...(resolved.deploy === "cloudrun" ? ["Deploy:      Google Cloud Run templates (service.yaml, skaffold.yaml)"] : []),
+      ...resolved.notes.map((n) => `Note:        ${n}`),
+    ].join("\n");
+  }
   const contentMode = contentModeFor(resolved.license);
   const lines = [
     `Target:      ${resolved.target} ${resolved.version}`,

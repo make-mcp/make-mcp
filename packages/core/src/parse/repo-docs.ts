@@ -20,7 +20,7 @@ export function repoWebUrl(repo: RepoRef): string {
   return `https://github.com/${repo.owner}/${repo.repo}`;
 }
 
-function githubHeaders(): Record<string, string> {
+export function githubHeaders(): Record<string, string> {
   const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
   return {
     "x-github-api-version": "2022-11-28",

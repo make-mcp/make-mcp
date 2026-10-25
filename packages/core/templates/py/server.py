@@ -48,31 +48,80 @@ def text(value: str, is_error: bool = False) -> types.CallToolResult:
 # ---------------------------------------------------------------------------
 
 
-def corpus_cache_path() -> Path:
+# One library for a single-target server; several (pages prefixed with "<library>/") for a whole-project server.
+MULTI = MANIFEST.get("libraries") is not None
+LIBRARIES: list[dict[str, Any]] = MANIFEST.get("libraries") or (
+    [
+        {
+            "name": NAME,
+            "title": TITLE,
+            "version": VERSION,
+            "license": MANIFEST.get("license"),
+            "contentMode": MANIFEST["docs"]["contentMode"],
+        }
+    ]
+    if MANIFEST.get("docs")
+    else []
+)
+
+
+def corpus_cache_path(lib: dict[str, Any]) -> Path:
     """Same location the `make-mcp refresh` command writes to."""
     base = os.environ.get("MAKE_MCP_CACHE_DIR") or str(
         Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "make-mcp"
     )
-    return Path(base) / NAME / VERSION / "corpus.json"
+    return Path(base) / lib["name"] / lib["version"] / "corpus.json"
 
 
-def load_pages() -> tuple[list[dict[str, Any]], str | None]:
-    docs = MANIFEST.get("docs")
-    if not docs:
-        return [], None
-    path = ROOT / "data" / "corpus.json" if docs["contentMode"] == "embedded" else corpus_cache_path()
-    if not path.exists():
-        return [], (
-            f"Documentation has not been downloaded yet. Run `uv run server.py --refresh` in {ROOT} "
-            "(fetches it from the original source on this machine)."
-        )
-    return json.loads(path.read_text("utf-8"))["pages"], None
+def load_docs() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[str]]:
+    pages: list[dict[str, Any]] = []
+    changes: dict[str, list[dict[str, Any]]] = {}
+    missing: list[str] = []
+    for lib in LIBRARIES:
+        if lib["contentMode"] == "embedded":
+            path = ROOT / "data" / "corpus" / f"{lib['name']}.json" if MULTI else ROOT / "data" / "corpus.json"
+        else:
+            path = corpus_cache_path(lib)
+        if not path.exists():
+            missing.append(lib["title"])
+            continue
+        corpus = json.loads(path.read_text("utf-8"))
+        for page in corpus["pages"]:
+            pages.append({**page, "path": f"{lib['name']}/{page['path']}", "library": lib["name"]} if MULTI else page)
+        if corpus.get("changes"):
+            changes[lib["name"]] = corpus["changes"]
+    return pages, changes, missing
 
 
-PAGES, DOCS_ERROR = load_pages()
-if DOCS_ERROR:
-    log(DOCS_ERROR)
+PAGES, CHANGES, MISSING = load_docs()
+REFRESH_HINT = f"Run `uv run server.py --refresh` in {ROOT} (fetches it from the original source on this machine)."
+DOCS_ERROR = f"Documentation has not been downloaded yet. {REFRESH_HINT}" if MISSING and not PAGES else None
+if MISSING:
+    log(f"Documentation not downloaded yet: {', '.join(MISSING)}. {REFRESH_HINT}")
+SYMBOLS: dict[str, list[dict[str, Any]]] = (
+    json.loads((ROOT / "data" / "symbols.json").read_text("utf-8")) if MANIFEST.get("symbols") else {}
+)
 COMPONENTS = [p for p in PAGES if p["kind"] == "component"]
+LIBRARY_LIST = ", ".join(f"{lib['title']} {lib['version']}" for lib in LIBRARIES)
+LIBRARY_PROPERTY: dict[str, Any] = (
+    {"library": {"type": "string", "enum": [lib["name"] for lib in LIBRARIES], "description": "Only this library (see list_topics)"}}
+    if MULTI
+    else {}
+)
+PRERELEASE = re.compile(r"^[-.]?(a|b|rc|alpha|beta|dev|pre|canary|next)", re.I)
+
+
+def version_key(version: str) -> tuple[int, int, int, int, str]:
+    """Orders versions like 1.2.3 < 1.10.0; pre-releases (1.0.0-rc.1, 1.0.0b1) before the release. Mirrors index.ts."""
+    m = re.match(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$", version.strip())
+    if not m:
+        return (-1, 0, 0, 0, version)
+    rest = m.group(4) or ""
+    return (int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0), 0 if PRERELEASE.match(rest) else 1, rest)
+
+
+def unknown_library(name: str) -> types.CallToolResult:
+    return text(f"Unknown library \"{name}\". Libraries: {', '.join(lib['name'] for lib in LIBRARIES)}.", True)
 TOKEN = re.compile(r"\w+", re.UNICODE)
 
 
@@ -133,8 +182,12 @@ INDEX = SearchIndex(PAGES)
 COMPONENT_IDS = {i for i, p in enumerate(PAGES) if p["kind"] == "component"}
 
 
-def search_pages(query: str, limit: int, only_components: bool = False) -> list[dict[str, Any]]:
-    return INDEX.search(query, limit, COMPONENT_IDS if only_components else None)
+def search_pages(query: str, limit: int, only_components: bool = False, library: str | None = None) -> list[dict[str, Any]]:
+    only = set(COMPONENT_IDS) if only_components else None
+    if library:
+        in_library = {i for i, p in enumerate(PAGES) if p.get("library") == library}
+        only = in_library if only is None else only & in_library
+    return INDEX.search(query, limit, only)
 
 
 def find_page(path: str) -> dict[str, Any] | None:
@@ -151,14 +204,18 @@ def snippet(markdown: str, query: str) -> str:
 
 READ_ONLY = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)
 DOCS_TOOLS: list[types.Tool] = []
-if MANIFEST.get("docs"):
+if LIBRARIES:
     DOCS_TOOLS = [
         types.Tool(
             name="search_docs",
-            description=f"Full-text search in the {TITLE} {VERSION} documentation. Returns matching pages with paths for get_page.",
+            description=(
+                f"Full-text search in the documentation of {LIBRARY_LIST} (the versions this project uses). Returns matching pages with paths for get_page."
+                if MULTI
+                else f"Full-text search in the {TITLE} {VERSION} documentation. Returns matching pages with paths for get_page."
+            ),
             input_schema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "number"}},
+                "properties": {"query": {"type": "string"}, "limit": {"type": "number"}, **LIBRARY_PROPERTY},
                 "required": ["query"],
             },
             annotations=READ_ONLY,
@@ -171,8 +228,12 @@ if MANIFEST.get("docs"):
         ),
         types.Tool(
             name="list_topics",
-            description=f"Lists all {TITLE} documentation pages grouped by section.",
-            input_schema={"type": "object", "properties": {}},
+            description=(
+                "Lists the documentation pages of one library grouped by section; without library it lists the libraries."
+                if MULTI
+                else f"Lists all {TITLE} documentation pages grouped by section."
+            ),
+            input_schema={"type": "object", "properties": {**LIBRARY_PROPERTY}},
             annotations=READ_ONLY,
         ),
     ]
@@ -182,7 +243,46 @@ if MANIFEST.get("docs"):
             types.Tool(
                 name="get_component",
                 description=f"Returns usage, class names and examples for a {TITLE} component ({names}{', …' if len(COMPONENTS) > 12 else ''}).",
-                input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+                input_schema={"type": "object", "properties": {"name": {"type": "string"}, **LIBRARY_PROPERTY}, "required": ["name"]},
+                annotations=READ_ONLY,
+            )
+        )
+    if CHANGES:
+        DOCS_TOOLS.append(
+            types.Tool(
+                name="changes_since",
+                description=(
+                    f"Release notes after a version{'' if MULTI else f' of {TITLE}'}: what changed, breaking changes and migration guides – "
+                    f"for upgrades. Covers releases published up to {MANIFEST['generatedAt'][:10]}."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "version": {
+                            "type": "string",
+                            "description": f"Version you are upgrading from (default: the version this server was generated for{'' if MULTI else f', {VERSION}'})",
+                        },
+                        "to": {"type": "string", "description": "Last version to include (default: newest known)"},
+                        **LIBRARY_PROPERTY,
+                    },
+                },
+                annotations=READ_ONLY,
+            )
+        )
+    if SYMBOLS:
+        with_symbols = ", ".join(f"{lib['title']} {lib['version']}" for lib in LIBRARIES if lib["name"] in SYMBOLS)
+        DOCS_TOOLS.append(
+            types.Tool(
+                name="get_signature",
+                description=f"Exact signature and doc comment of an exported function, class, type or constant of {with_symbols} – read from the installed package.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Exported name, e.g. useState, BaseModel or Client.get"},
+                        **LIBRARY_PROPERTY,
+                    },
+                    "required": ["name"],
+                },
                 annotations=READ_ONLY,
             )
         )
@@ -193,25 +293,38 @@ def call_docs_tool(name: str, args: dict[str, Any]) -> types.CallToolResult | No
         return None
     if DOCS_ERROR:
         return text(DOCS_ERROR, True)
+    library = args.get("library") if isinstance(args.get("library"), str) and args.get("library") else None
+    if library and not any(lib["name"] == library for lib in LIBRARIES):
+        return unknown_library(library)
     if name == "search_docs":
         query = str(args.get("query", ""))
-        hits = search_pages(query, min(int(args.get("limit") or 5), 20))
+        hits = search_pages(query, min(int(args.get("limit") or 5), 20), library=library)
         if not hits:
             return text(f'No results for "{query}". Try list_topics.')
-        return text(
-            "\n\n".join(
-                f"## {p['title']}{' (' + p['section'] + ')' if p.get('section') else ''}\npath: {p['path']}\n{snippet(p['markdown'], query)}"
-                for p in hits
-            )
-        )
+        parts = []
+        for p in hits:
+            where = " · ".join(x for x in (p.get("library"), p.get("section")) if x)
+            parts.append(f"## {p['title']}{f' ({where})' if where else ''}\npath: {p['path']}\n{snippet(p['markdown'], query)}")
+        return text("\n\n".join(parts))
     if name == "get_page":
         page = find_page(str(args.get("path", "")))
         if not page:
             return text(f"Unknown path \"{args.get('path')}\". Use search_docs or list_topics.", True)
         return text(f"{page['markdown']}\n\n_Source: {page['sourceUrl']}_")
     if name == "list_topics":
+        if MULTI and not library:
+            lines = []
+            for lib in LIBRARIES:
+                count = sum(1 for p in PAGES if p.get("library") == lib["name"])
+                lines.append(
+                    f"- {lib['title']} {lib['version']} — library `{lib['name']}`, {f'{count} pages' if count else 'not downloaded yet'}"
+                    f"{', release notes' if lib['name'] in CHANGES else ''}{', signatures' if lib['name'] in SYMBOLS else ''}"
+                )
+            return text("# Libraries\n" + "\n".join(lines) + "\n\nCall list_topics with library for its pages.")
         groups: dict[str, list[dict[str, Any]]] = {}
         for page in PAGES:
+            if library and page.get("library") != library:
+                continue
             groups.setdefault(page.get("section") or "General", []).append(page)
         return text(
             "\n\n".join(
@@ -222,12 +335,92 @@ def call_docs_tool(name: str, args: dict[str, Any]) -> types.CallToolResult | No
     if name == "get_component":
         wanted = str(args.get("name", "")).lower().strip()
         for c in COMPONENTS:
-            if c["title"].lower() == wanted or c["path"].split("/")[-1] == wanted.replace(" ", "-"):
+            if library and c.get("library") != library:
+                continue
+            if c["title"].lower() == wanted or c["path"].split("/")[-1] == re.sub(r"\s+", "-", wanted):
                 return text(f"{c['markdown']}\n\n_Source: {c['sourceUrl']}_")
-        similar = [p["title"] for p in search_pages(wanted, 5, only_components=True)]
+        similar = [p["title"] for p in search_pages(wanted, 5, only_components=True, library=library)]
         hint = f" Did you mean: {', '.join(similar)}?" if similar else ""
         return text(f"No component named \"{args.get('name')}\".{hint}", True)
+    if name == "changes_since":
+        return changes_since(args, library)
+    if name == "get_signature":
+        return get_signature(args, library)
     return None
+
+
+def changes_since(args: dict[str, Any], library: str | None) -> types.CallToolResult:
+    name = library or (next(iter(CHANGES)) if len(CHANGES) == 1 else None)
+    if not name:
+        return text(f"Pass library – release notes exist for: {', '.join(CHANGES)}.", True)
+    lib = next(lib for lib in LIBRARIES if lib["name"] == name)
+    entries = CHANGES.get(name)
+    if not entries:
+        return text(f"No release notes for {lib['title']}. Release notes exist for: {', '.join(CHANGES)}.", True)
+    start = re.sub(r"^v", "", str(args.get("version") or lib["version"]))
+    to = re.sub(r"^v", "", args["to"]) if isinstance(args.get("to"), str) and args.get("to") else None
+    selected = [
+        e for e in entries if version_key(e["version"]) > version_key(start) and (not to or version_key(e["version"]) <= version_key(to))
+    ]
+    span = f"{start}{f' up to {to}' if to else ''}"
+    if not selected:
+        return text(
+            f"No {lib['title']} release after {span} in this server's data. Newest known: {entries[-1]['version']} "
+            f"(collected {MANIFEST['generatedAt'][:10]} – regenerate the server for later releases)."
+        )
+    guides = [
+        f"- {p['title']} — `{p['path']}`"
+        for p in PAGES
+        if (not MULTI or p.get("library") == name) and re.search(r"migrat|upgrad|breaking", f"{p['title']} {p['path']}", re.I)
+    ][:8]
+    parts = [f"# {lib['title']}: {len(selected)} release{'' if len(selected) == 1 else 's'} after {span}"]
+    if guides:
+        parts.append("Migration guides in the docs (get_page):\n" + "\n".join(guides))
+    size = len("\n\n".join(parts))
+    shown = 0
+    for e in selected:
+        heading = f"{e['version']} – {e['title']}" if e["title"] not in (e["version"], f"v{e['version']}") else e["version"]
+        date = f" ({e['date']})" if e.get("date") else ""
+        block = f"## {heading}{date}\n{e['markdown']}\n\n_Source: {e['sourceUrl']}_"
+        if shown > 0 and size + len(block) > MAX_RESPONSE_CHARS:
+            break
+        parts.append(block)
+        size += len(block)
+        shown += 1
+    if shown < len(selected):
+        rest = len(selected) - shown
+        parts.append(f"… {rest} later release{'' if rest == 1 else 's'} not shown – call again with version {selected[shown - 1]['version']}.")
+    return text("\n\n".join(parts))
+
+
+def get_signature(args: dict[str, Any], library: str | None) -> types.CallToolResult:
+    wanted = str(args.get("name", "")).strip()
+    if library and library not in SYMBOLS:
+        return text(f"No API signatures for {library}. Available for: {', '.join(SYMBOLS)}.", True)
+    scope = [library] if library else list(SYMBOLS)
+    candidates = [(lib, s) for lib in scope for s in SYMBOLS.get(lib, [])]
+    hits = [c for c in candidates if c[1]["name"] == wanted]
+    if not hits:
+        hits = [c for c in candidates if c[1]["name"].lower() == wanted.lower()]
+    if not hits:
+        # Namespace members: "useState" finds "React.useState".
+        hits = [c for c in candidates if c[1]["name"].endswith(f".{wanted}")]
+    if not hits and "." in wanted:
+        # TypeScript members ("Client.get") are part of their class or interface declaration.
+        hits = [c for c in candidates if c[1]["name"] == wanted.split(".")[0]]
+    if hits:
+        blocks = []
+        for lib, s in hits[:5]:
+            language = "ts" if re.search(r"\.d\.[mc]?ts$", s["module"]) else "python"
+            doc = f"\n\n{s['doc']}" if s.get("doc") else ""
+            blocks.append(
+                f"## {s['name']} ({s['kind']}{f', {lib}' if MULTI else ''})\nmodule: {s['module']}\n\n```{language}\n{s['signature']}\n```{doc}"
+            )
+        return text("\n\n---\n\n".join(blocks))
+    needle = wanted.lower()
+    similar = list(dict.fromkeys(s["name"] for _, s in candidates if needle in s["name"].lower()))[:15]
+    hint = f" Similar: {', '.join(similar)}." if similar else " Use search_docs for concepts and guides."
+    return text(f"No exported symbol \"{wanted}\".{hint}", True)
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +739,7 @@ async def on_list_resource_templates(_ctx: Any, _params: Any) -> types.ListResou
         for ep in RESOURCE_ENDPOINTS
         if "{" in ep["path"]
     ]
-    if MANIFEST.get("docs"):
+    if LIBRARIES:
         templates.append(
             types.ResourceTemplate(name="Documentation page", uri_template=f"docs://{NAME}/{{path}}", mime_type="text/markdown")
         )
@@ -573,7 +766,14 @@ async def on_read_resource(_ctx: Any, params: types.ReadResourceRequestParams) -
 INSTRUCTIONS = " ".join(
     s
     for s in [
-        f"Documentation for {TITLE} {VERSION}: use search_docs first, then get_page." if MANIFEST.get("docs") else "",
+        (
+            f"Documentation for {LIBRARY_LIST if MULTI else f'{TITLE} {VERSION}'}: use search_docs first"
+            f"{' (optionally with library)' if MULTI else ''}, then get_page{' or get_component' if COMPONENTS else ''}."
+        )
+        if LIBRARIES
+        else "",
+        "For upgrades: changes_since lists the release notes after a version." if CHANGES else "",
+        "For exact parameters and types: get_signature." if SYMBOLS else "",
         (
             f"{API['title']} API ({len(ENDPOINTS)} operations): list_operations → describe_operation → call_operation."
             if GROUPED
@@ -680,8 +880,7 @@ def run_http(legacy_sse: bool) -> None:
 
 def refresh() -> int:
     """Downloads documentation for servers that must not embed it (see README) into the local cache."""
-    docs = MANIFEST.get("docs")
-    if not docs or docs["contentMode"] == "embedded":
+    if not any(lib["contentMode"] != "embedded" for lib in LIBRARIES):
         print("Nothing to refresh: the documentation is embedded in this server.", file=sys.stderr)
         return 0
     npx = shutil.which("npx")

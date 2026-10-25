@@ -3,7 +3,8 @@
 When the user asks for an MCP server for a library, product or API, use the `make-mcp` MCP server
 (`npx -y @make-mcp/cli mcp`). Its `create_mcp` prompt and tool descriptions contain the full workflow:
 
-1. `detect_context` with the target and `workspace` = absolute project path → report what was found, including `notes`.
+1. `detect_context` with the target (or `.` for all libraries of the project) and `workspace` = absolute project path
+   → report what was found, including `notes`.
 2. Ask the returned `questions` (show options, pre-select `default`, allow free text when `allowFreeText`).
    Never answer on the user's behalf.
 3. `submit_answers` until no questions remain.

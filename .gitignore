@@ -7,3 +7,6 @@ dist/
 __pycache__/
 .venv/
 .e2e-ws-*/
+!fixtures/workspaces/*/node_modules/
+!fixtures/workspaces/*/.venv/
+!fixtures/workspaces/**/dist/

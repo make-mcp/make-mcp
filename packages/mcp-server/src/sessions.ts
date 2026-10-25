@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import {
   applyRegistration,
-  applySourceAnswers,
   catalogAnswers,
   detectContext,
   EXTRACTION_INSTRUCTIONS,
@@ -15,6 +14,7 @@ import {
   normalizeAnswers,
   parseModelJson,
   planRegistration,
+  refineFindings,
   resolveIntake,
   runExtraction,
   startExtraction,
@@ -66,6 +66,10 @@ export interface FindingsView {
   openapi: Findings["openapi"];
   mode: Findings["mode"];
   language: Findings["language"];
+  /** Other direct dependencies of the workspace – the bundle question offers one server for all of them. */
+  projectLibraries: string[] | undefined;
+  /** Libraries of a whole-project server once the bundle answer is in. */
+  libraries: { name: string; version: string | undefined; docs: string | undefined }[] | undefined;
   notes: string[];
 }
 
@@ -83,6 +87,8 @@ export function findingsView(f: Findings): FindingsView {
     openapi: f.openapi,
     mode: f.mode,
     language: f.language,
+    projectLibraries: f.projectDeps?.map((d) => d.name),
+    libraries: f.members?.map((m) => ({ name: m.target, version: m.version?.value, docs: m.docsCandidates[0]?.url })),
     notes: f.notes,
   };
 }
@@ -98,6 +104,8 @@ export interface AnswerResult {
   questions: Question[];
   ready: boolean;
   notes: string[];
+  /** Updated findings, e.g. the detected libraries of a whole-project server. */
+  findings: FindingsView;
 }
 
 export interface PreviewResult {
@@ -121,6 +129,8 @@ export interface GenerateResult {
   tools: string[];
   docPages: number;
   endpoints: number;
+  releases: number;
+  signatures: number;
   contentMode?: string;
   envVars: GeneratedProject["envVars"];
   warnings: string[];
@@ -150,8 +160,11 @@ export class IntakeSessions {
   }
 
   async detect(target: string, workspace?: string): Promise<DetectResult> {
-    const findings = await detectContext({ target, workspaceRoot: workspace ?? this.defaultWorkspace ?? process.cwd(), ...this.fetchers });
-    const s: Session = { id: randomUUID(), createdAt: Date.now(), findings, answers: catalogAnswers(findings, {}) };
+    const detected = await detectContext({ target, workspaceRoot: workspace ?? this.defaultWorkspace ?? process.cwd(), ...this.fetchers });
+    const answers = catalogAnswers(detected, {});
+    // Target "." starts as a whole-project server: detect its libraries right away.
+    const findings = await refineFindings(detected, answers, [], this.fetchers);
+    const s: Session = { id: randomUUID(), createdAt: Date.now(), findings, answers };
     this.sessions.set(s.id, s);
     // Maps keep insertion order: drop the oldest sessions first.
     for (const id of [...this.sessions.keys()].slice(0, Math.max(0, this.sessions.size - MAX_SESSIONS))) this.sessions.delete(id);
@@ -161,7 +174,7 @@ export class IntakeSessions {
   async answer(sessionId: string, raw: Record<string, string>): Promise<AnswerResult> {
     const s = this.get(sessionId);
     const answers = normalizeAnswers(s.findings, s.answers, raw);
-    const findings = raw.docsSource || raw.codeSource ? await applySourceAnswers(s.findings, answers, this.fetchers) : s.findings;
+    const findings = await refineFindings(s.findings, answers, Object.keys(raw), this.fetchers);
     // Commit only after everything succeeded, and drop all state derived from the old answers.
     s.answers = answers;
     s.findings = findings;
@@ -170,7 +183,7 @@ export class IntakeSessions {
     s.extracting = undefined;
     s.project = undefined;
     const questions = nextQuestions(s.findings, s.answers);
-    return { answers: s.answers, questions, ready: questions.length === 0, notes: s.findings.notes };
+    return { answers: s.answers, questions, ready: questions.length === 0, notes: s.findings.notes, findings: findingsView(s.findings) };
   }
 
   preview(sessionId: string): PreviewResult {
@@ -285,6 +298,8 @@ export class IntakeSessions {
       tools: project.tools,
       docPages: project.pageCount,
       endpoints: project.endpointCount,
+      releases: project.changeCount,
+      signatures: project.symbolCount,
       ...(project.manifest.docs?.contentMode ? { contentMode: project.manifest.docs.contentMode } : {}),
       envVars: project.envVars,
       warnings: project.warnings,

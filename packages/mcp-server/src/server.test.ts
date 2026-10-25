@@ -55,17 +55,17 @@ describe("make-mcp server flow (daisyUI)", async () => {
     const result = parse(await client.callTool({ name: "detect_context", arguments: { target: "daisyUI" } }));
     sessionId = result.sessionId as string;
     expect((result.findings as { version: { value: string } }).version.value).toBe("5.7.50");
-    expect((result.questions as { id: string }[]).map((q) => q.id)).toEqual(["mode", "register"]);
+    expect((result.questions as { id: string }[]).map((q) => q.id)).toEqual(["bundle"]);
   });
 
   it("refuses to preview while questions are open", async () => {
     const result = await client.callTool({ name: "preview_plan", arguments: { sessionId } });
     expect(result.isError).toBe(true);
-    expect(parse(result)).toMatchObject({ error: "INTAKE_INCOMPLETE", missing: ["mode", "register"] });
+    expect(parse(result)).toMatchObject({ error: "INTAKE_INCOMPLETE", missing: ["bundle", "mode", "register"] });
   });
 
   it("accepts answers by label and previews the plan", async () => {
-    const answered = parse(await client.callTool({ name: "submit_answers", arguments: { sessionId, answers: { mode: "Look up knowledge", register: "project" } } }));
+    const answered = parse(await client.callTool({ name: "submit_answers", arguments: { sessionId, answers: { bundle: "single", mode: "Look up knowledge", register: "project" } } }));
     expect(answered.ready).toBe(true);
     const preview = await client.callTool({ name: "preview_plan", arguments: { sessionId } });
     expect((preview.content as { text: string }[])[0]!.text).toContain("Target:      daisyUI 5.7.50");
@@ -156,5 +156,29 @@ describe("make-mcp server flow (API extracted from prose docs)", async () => {
     const generated = parse(await client.callTool({ name: "generate_server", arguments: { sessionId } }));
     expect(generated.tools).toEqual(["list_notes"]);
     expect((generated.envVars as { name: string }[]).map((v) => v.name)).toEqual(["NOTES_API_KEY", "NOTES_BASE_URL"]);
+  });
+});
+
+describe("make-mcp server flow (whole project)", async () => {
+  const client = await connect();
+
+  it("offers one server for the project's libraries and previews it", async () => {
+    const detected = parse(await client.callTool({ name: "detect_context", arguments: { target: "daisyUI", workspace: fixtures("workspaces/project") } }));
+    expect((detected.findings as { projectLibraries: string[] }).projectLibraries).toEqual(["@acme/internal", "acme-ui"]);
+    expect((detected.questions as { id: string }[]).map((q) => q.id)).toEqual(["bundle"]);
+
+    const answered = parse(
+      await client.callTool({ name: "submit_answers", arguments: { sessionId: detected.sessionId, answers: { bundle: "Whole project", register: "none" } } }),
+    );
+    expect(answered.ready).toBe(true);
+    const preview = (await client.callTool({ name: "preview_plan", arguments: { sessionId: detected.sessionId } })).content as { text: string }[];
+    expect(preview[0]!.text).toContain("one docs server for 2 libraries");
+    expect(preview[0]!.text).toContain("acme-ui 2.0.0");
+  });
+
+  it("starts with the whole project for target \".\"", async () => {
+    const detected = parse(await client.callTool({ name: "detect_context", arguments: { target: ".", workspace: fixtures("workspaces/project") } }));
+    expect((detected.findings as { libraries: { name: string }[] }).libraries.map((l) => l.name)).toEqual(["acme-ui", "daisyui"]);
+    expect((detected.questions as { id: string }[]).map((q) => q.id)).toEqual(["register"]);
   });
 });

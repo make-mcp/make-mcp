@@ -4,14 +4,15 @@ import semver from "semver";
 import { catalogName, findCatalogEntry } from "../catalog.js";
 import type { Fetcher } from "../fetch/types.js";
 import { MakeMcpError } from "../errors.js";
-import { createWorkspace } from "../fs/workspace.js";
-import type { Findings, IntakeAnswers, Mode, TargetKind } from "../intake/types.js";
+import { createWorkspace, type Workspace } from "../fs/workspace.js";
+import { bundleChoice, isBundle } from "../intake/questions.js";
+import type { Findings, IntakeAnswers, Mode, ProjectDependency, TargetKind } from "../intake/types.js";
 import type { DocsSource } from "../parse/docs-corpus.js";
 import { slugify } from "../parse/markdown-split.js";
 import { listRepoTags, matchVersionTag, parseRepoUrl, repoWebUrl } from "../parse/repo-docs.js";
 import { probeDocs, type DocsProbe } from "./probe.js";
 import { npmMetadata, pypiMetadata, type PackageMetadata } from "./registry.js";
-import { findInstalledPythonPackage, matchPythonDependency } from "./python-packages.js";
+import { findInstalledPythonPackage, matchPythonDependency, normalizePythonName, pythonDependencies } from "./python-packages.js";
 import { detectWorkspaceLanguage, findInstalledPackage, matchDependency } from "./workspace-packages.js";
 
 export interface DetectOptions {
@@ -68,11 +69,73 @@ async function packageMetadata(name: string, version: string | undefined, prefer
   return undefined;
 }
 
+/** Build tooling, linters and type packages: not libraries anyone asks an MCP server about. */
+const TOOLING =
+  /^(@types\/|types-|@typescript-eslint\/|eslint|@eslint\/|prettier|typescript$|ts-node$|tsx$|husky$|lint-staged$|rimraf$|cross-env$|concurrently$|nodemon$|npm-run-all|@biomejs\/|vite$|@vitejs\/|vitest|@vitest\/|jest$|@jest\/|ts-jest$|babel-|@babel\/|webpack|esbuild$|rollup$|@rollup\/|@swc\/|postcss$|autoprefixer$|pytest|mypy$|ruff$|black$|flake8|isort$|pre-commit$|coverage$|tox$|pylint$)/i;
+
+/** Direct dependencies of the workspace, runtime ones first, without build tooling. No network. */
+export function projectDependencies(ws: Workspace): ProjectDependency[] {
+  const deps: ProjectDependency[] = [];
+  const pkg = ws.readJson<{ dependencies?: Record<string, string>; devDependencies?: Record<string, string> }>("package.json");
+  // Runtime dependencies first: the library cap of a project server cuts from the end.
+  for (const name of Object.keys(pkg?.dependencies ?? {})) deps.push({ name, registry: "npm" });
+  for (const dep of pythonDependencies(ws)) deps.push({ name: dep.name, registry: "pypi" });
+  for (const name of Object.keys(pkg?.devDependencies ?? {})) deps.push({ name, registry: "npm" });
+  const seen = new Set<string>();
+  return deps.filter((d) => {
+    const key = `${d.registry}:${d.registry === "pypi" ? normalizePythonName(d.name) : d.name}`;
+    if (TOOLING.test(d.name) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function projectName(ws: Workspace): string | undefined {
+  const pkg = ws.readJson<{ name?: string }>("package.json");
+  if (pkg?.name) return pkg.name;
+  return /^\s*name\s*=\s*["']([^"']+)["']/m.exec(ws.readText("pyproject.toml") ?? "")?.[1];
+}
+
+const sameDependency = (dep: ProjectDependency, findings: Findings) =>
+  dep.registry === "pypi"
+    ? normalizePythonName(dep.name) === normalizePythonName(findings.packageName ?? findings.target)
+    : dep.name === (findings.packageName ?? findings.target);
+
 /**
  * Detects the target and, if the community catalog has an entry for it, applies the entry's sources and mode.
- * `catalog:<name>` forces a catalog entry; plain names are looked up as well.
+ * `catalog:<name>` forces a catalog entry; plain names are looked up as well. `.` stands for the whole project:
+ * the first dependency becomes the target and the intake starts with a whole-project server.
  */
 export async function detectContext(options: DetectOptions): Promise<Findings> {
+  if (options.target.trim() === ".") {
+    const ws = createWorkspace(options.workspaceRoot);
+    const deps = projectDependencies(ws);
+    if (deps.length === 0) throw new MakeMcpError("SOURCE_NOT_FOUND", `No dependencies found in package.json, pyproject.toml or requirements of ${ws.root}.`);
+    // The first dependency that is a published library with docs becomes the primary; private packages are skipped.
+    for (const dep of deps) {
+      const primary = await detectCatalogTarget({ ...options, target: dep.name, preferPython: dep.registry === "pypi" }).catch(() => undefined);
+      if (!primary || primary.kind.value !== "library" || primary.docsCandidates.length === 0) continue;
+      const name = projectName(ws);
+      return {
+        ...primary,
+        projectDeps: deps.filter((d) => d !== dep),
+        ...(name ? { projectName: name } : {}),
+        bundle: { value: "project", confidence: "high", source: 'target "."' },
+      };
+    }
+    throw new MakeMcpError("SOURCE_NOT_FOUND", "None of the project's dependencies is a published library with documentation make-mcp can read.");
+  }
+  const findings = await detectCatalogTarget(options);
+  if (isUrl(options.target) || findings.kind.value !== "library") return findings;
+  // Offer a whole-project server when the target is one of several dependencies of the workspace.
+  const ws = createWorkspace(options.workspaceRoot);
+  const deps = projectDependencies(ws);
+  if (!deps.some((d) => sameDependency(d, findings))) return findings;
+  const name = projectName(ws);
+  return { ...findings, projectDeps: deps.filter((d) => !sameDependency(d, findings)), ...(name ? { projectName: name } : {}) };
+}
+
+async function detectCatalogTarget(options: DetectOptions): Promise<Findings> {
   const entry = await findCatalogEntry(options.target, options.apiFetcher);
   if (!entry && catalogName(options.target)) {
     throw new MakeMcpError("SOURCE_NOT_FOUND", `No catalog entry "${catalogName(options.target)}" – see https://github.com/make-mcp/catalog`);
@@ -128,8 +191,16 @@ async function detectTarget(options: DetectOptions): Promise<Findings> {
   else if (installed && "range" in installed && installed.range) {
     version = { value: installed.version, confidence: "medium", source: `${installed.source} range ${installed.range}` };
   } else if (installed) {
-    const min = semver.minVersion(installed.version)?.version;
-    version = { value: min ?? installed.version, confidence: "medium", source: `package.json range ${installed.version}` };
+    // Ranges such as "workspace:*", "latest" or "github:user/repo" have no minimum version.
+    const min = (() => {
+      try {
+        return semver.minVersion(installed.version)?.version;
+      } catch {
+        return undefined;
+      }
+    })();
+    if (min) version = { value: min, confidence: "medium", source: `package.json range ${installed.version}` };
+    else if (meta) version = { value: meta.latest, confidence: "low", source: `${meta.registry} latest (package.json says ${installed.version})` };
   } else if (meta) version = { value: meta.latest, confidence: "low", source: `${meta.registry} latest` };
 
   const repo = parseRepoUrl(meta?.repositoryUrl);
@@ -172,6 +243,79 @@ async function detectTarget(options: DetectOptions): Promise<Findings> {
 export interface RefineOptions {
   apiFetcher: Fetcher;
   contentFetcher: Fetcher;
+}
+
+/** Upper bound for a whole-project server: every library costs a docs download and context in the agent. */
+export const MAX_PROJECT_LIBRARIES = 12;
+const DETECT_CONCURRENCY = 4;
+
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/**
+ * Detects every library of a whole-project server (bundle answer "project" or a list of package names).
+ * Libraries without documentation are left out with a note; the target comes first.
+ */
+export async function expandBundle(findings: Findings, answers: IntakeAnswers, options: RefineOptions): Promise<Findings> {
+  const base: Findings = { ...findings };
+  delete base.members;
+  if (!isBundle(findings, answers)) return base;
+  const choice = bundleChoice(findings, answers);
+  const deps = findings.projectDeps ?? [];
+  const notes = [...findings.notes];
+  let wanted: ProjectDependency[] =
+    choice.toLowerCase() === "project"
+      ? deps
+      : choice
+          .split(",")
+          .map((n) => n.trim())
+          .filter(Boolean)
+          .map((n) => deps.find((d) => d.name.toLowerCase() === n.toLowerCase()) ?? { name: n, registry: findings.registry ?? "npm" })
+          .filter((d) => !sameDependency(d, findings));
+  if (wanted.length > MAX_PROJECT_LIBRARIES - 1) {
+    notes.push(`A project server holds up to ${MAX_PROJECT_LIBRARIES} libraries; left out: ${wanted.slice(MAX_PROJECT_LIBRARIES - 1).map((d) => d.name).join(", ")}.`);
+    wanted = wanted.slice(0, MAX_PROJECT_LIBRARIES - 1);
+  }
+
+  const detected = await mapLimited(wanted, DETECT_CONCURRENCY, (dep) =>
+    detectCatalogTarget({ target: dep.name, workspaceRoot: findings.workspaceRoot, ...options, preferPython: dep.registry === "pypi" }).catch(
+      (err: unknown) => {
+        notes.push(`${dep.name}: left out (${(err as Error).message})`);
+        return undefined;
+      },
+    ),
+  );
+  const members: Findings[] = [];
+  const primary = { ...base, notes: [] };
+  for (const member of [primary, ...detected]) {
+    if (!member) continue;
+    if (member.docsCandidates.length === 0) notes.push(`${member.target}: no documentation found – left out of the project server.`);
+    else if (members.some((m) => m.slug === member.slug)) notes.push(`${member.target}: same name as another library ("${member.slug}") – left out.`);
+    else members.push({ ...member, notes: [] });
+  }
+  if (members.length === 0) throw new MakeMcpError("SOURCE_NOT_FOUND", "None of the project's libraries has documentation make-mcp can read.");
+  return { ...base, members, notes };
+}
+
+/**
+ * Folds answers that need network into the findings: docs/code locations and the libraries of a project server.
+ * `changed` are the answer ids the caller just received.
+ */
+export async function refineFindings(findings: Findings, answers: IntakeAnswers, changed: string[], options: RefineOptions): Promise<Findings> {
+  let next = findings;
+  if (changed.includes("docsSource") || changed.includes("codeSource")) next = await applySourceAnswers(next, answers, options);
+  if (changed.includes("bundle") || (isBundle(next, answers) && !next.members)) next = await expandBundle(next, answers, options);
+  return next;
 }
 
 /** Folds user-supplied docs/code locations into the findings so later steps can use them. */

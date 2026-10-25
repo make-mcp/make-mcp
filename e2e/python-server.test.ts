@@ -14,6 +14,7 @@ import {
   createPoliteFetch,
   detectContext,
   generateProject,
+  refineFindings,
   resolveIntake,
   writeProject,
 } from "@make-mcp/core";
@@ -28,9 +29,12 @@ const outRoot = mkdtempSync(join(tmpdir(), "make-mcp-py-"));
 afterAll(() => rmSync(outRoot, { recursive: true, force: true }));
 
 async function generatePython(target: string, workspace: string, answers: Record<string, string>, env: Record<string, string> = {}, name?: string) {
-  const findings = await detectContext({ target, workspaceRoot: fixtures(workspace), apiFetcher, contentFetcher });
+  const detected = await detectContext({ target, workspaceRoot: fixtures(workspace), apiFetcher, contentFetcher });
+  // Target "." starts as a whole-project server; everything else stays a single-library server here.
+  const intake = { ...(target === "." ? {} : { bundle: "single" }), ...answers };
+  const findings = await refineFindings(detected, intake, Object.keys(intake), { apiFetcher, contentFetcher });
   const outDir = join(outRoot, name ?? `${findings.slug}-${answers.tools ?? "default"}`);
-  const resolved = resolveIntake(findings, { ...answers, language: "py", register: "none", outDir });
+  const resolved = resolveIntake(findings, { ...intake, language: "py", register: "none", outDir });
   const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: outRoot });
   writeProject(project);
   execFileSync("uv", ["sync", "--quiet", "--directory", project.outDir], { stdio: "inherit" });
@@ -72,6 +76,36 @@ describe.skipIf(!enabled)("generated Python servers", () => {
       expect(refresh.stderr).toContain("documentation is embedded");
       const page = await client.readResource({ uri: "docs://daisyui/components/card" });
       expect((page.contents[0] as { text: string }).text).toContain("card");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("whole-project server mirrors the TypeScript variant", { timeout: 180_000 }, async () => {
+    const { project, client } = await generatePython(".", "workspaces/project", {}, {}, "acme-app-libs");
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(["search_docs", "get_page", "list_topics", "get_component", "changes_since", "get_signature"]);
+      expect(tools.map((t) => t.name)).toEqual(project.tools);
+      expect(firstText(await client.callTool({ name: "list_topics", arguments: {} }))).toContain("- acme-ui 2.0.0 — library `acme-ui`");
+      const hits = firstText(await client.callTool({ name: "search_docs", arguments: { query: "button", library: "daisyui" } }));
+      expect(hits).toContain("path: daisyui/components/button");
+      expect(hits).not.toContain("acme-ui/");
+      const upgrade = firstText(await client.callTool({ name: "changes_since", arguments: { library: "acme-ui" } }));
+      expect(upgrade).toContain("# acme-ui: 2 releases after 2.0.0");
+      expect(upgrade).toContain("## 2.1.0 – Ghost buttons (2026-06-01)");
+      expect(upgrade).toContain("Migrating to v3 — `acme-ui/migrating-to-v3`");
+      const range = firstText(await client.callTool({ name: "changes_since", arguments: { library: "acme-ui", version: "v2.1.0", to: "3.0.0" } }));
+      expect(range).toContain("1 release after 2.1.0 up to 3.0.0");
+      const theme = firstText(await client.callTool({ name: "get_signature", arguments: { name: "createTheme" } }));
+      expect(theme).toContain("## createTheme (function, acme-ui)");
+      expect(theme).toContain("```ts\nfunction createTheme(tokens?: Partial<Theme>): Theme;");
+      expect(firstText(await client.callTool({ name: "get_signature", arguments: { name: "load" } }))).toContain("## icons.load (function, acme-ui)");
+      expect(firstText(await client.callTool({ name: "changes_since", arguments: { library: "acme-ui", version: "" } }))).toContain("2 releases after 2.0.0");
+      const miss = await client.callTool({ name: "get_signature", arguments: { name: "them" } });
+      expect(miss.isError).toBe(true);
+      expect(firstText(miss)).toContain("Similar: Theme, createTheme");
+      expect((await client.callTool({ name: "search_docs", arguments: { query: "x", library: "vue" } })).isError).toBe(true);
     } finally {
       await client.close();
     }

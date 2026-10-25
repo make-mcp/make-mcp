@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
   applyRegistration,
-  applySourceAnswers,
   catalogAnswers,
   createFetchers,
   createLlmFromEnv,
@@ -17,6 +16,7 @@ import {
   nextQuestions,
   normalizeAnswers,
   planRegistration,
+  refineFindings,
   refreshDocs,
   resolveIntake,
   runExtraction,
@@ -43,6 +43,7 @@ Run with "npx @make-mcp/cli <command>" or install globally: "npm i -g @make-mcp/
 
 Usage:
   make-mcp create [target]          Interactive: detect, ask, generate, test, register
+                                    (target "." = one server for the libraries of the whole project)
   make-mcp generate --target <t>    Non-interactive (use --yes to accept defaults)
   make-mcp mcp                      Run make-mcp as an MCP server (stdio) for coding agents
   make-mcp ui                       Local web UI (127.0.0.1:4321; --port, --host, --workspace)
@@ -57,6 +58,7 @@ Options for create/generate:
   --mode <docs|api|both>   --lang <ts|py>   --version <v>   --out <dir>
   --docs <url|none>     --code <url|path|none>   --auth <none|apiKey|bearer|basic|oauth2>
   --scope <all|tag,…>   --transport <stdio|http>   --register <project|global|none>
+  --project             One server for all direct dependencies (or --libraries react,next,zod)
   --tools <endpoints|grouped>   (default: grouped above 40 API operations)
   --deploy <none|cloudrun>      (default: cloudrun with --transport http)
   --client <claude-code|cursor>   --zip   --yes   --allow-private   --fixtures <dir>
@@ -87,6 +89,8 @@ const { positionals, values } = parseArgs({
     register: { type: "string" },
     tools: { type: "string" },
     deploy: { type: "string" },
+    project: { type: "boolean", default: false },
+    libraries: { type: "string" },
     client: { type: "string", default: "claude-code" },
     zip: { type: "boolean", default: false },
     yes: { type: "boolean", short: "y", default: false },
@@ -115,6 +119,7 @@ function answersFromFlags(): Record<string, string> {
     register: values.register,
     tools: values.tools,
     deploy: values.deploy,
+    bundle: values.libraries ?? (values.project ? "project" : undefined),
   };
   return Object.fromEntries(Object.entries(map).filter((e): e is [string, string] => e[1] !== undefined));
 }
@@ -147,8 +152,10 @@ async function intake(fetchers: Fetchers, interactive: boolean): Promise<Resolve
   out(`Detecting ${target} …`);
   let findings = await detectContext({ target, workspaceRoot, ...fetchers });
   if (findings.catalog) out(`  catalog: ${findings.catalog.name} – ${findings.catalog.description}`);
-  let answers: IntakeAnswers = normalizeAnswers(findings, catalogAnswers(findings, {}), answersFromFlags());
-  if (answers.docsSource || answers.codeSource) findings = await applySourceAnswers(findings, answers, fetchers);
+  const flags = answersFromFlags();
+  let answers: IntakeAnswers = normalizeAnswers(findings, catalogAnswers(findings, {}), flags);
+  if (flags.bundle || findings.bundle) out("Detecting the project's libraries …");
+  findings = await refineFindings(findings, answers, Object.keys(flags), fetchers);
   findings.notes.forEach((n) => out(`  note: ${n}`));
 
   if (interactive && !values.yes) {
@@ -156,7 +163,8 @@ async function intake(fetchers: Fetchers, interactive: boolean): Promise<Resolve
       const raw: Record<string, string> = {};
       for (const question of questions) raw[question.id] = await ask(question);
       answers = normalizeAnswers(findings, answers, raw);
-      if (raw.docsSource || raw.codeSource) findings = await applySourceAnswers(findings, answers, fetchers);
+      if (raw.bundle && raw.bundle !== "single") out("Detecting the project's libraries …");
+      findings = await refineFindings(findings, answers, Object.keys(raw), fetchers);
     }
   }
   return resolveIntake(findings, answers, { useDefaults: values.yes || !interactive });
@@ -288,6 +296,9 @@ async function main(): Promise<void> {
     case "refresh": {
       const dir = resolve(positionals[1] ?? ".");
       const result = await refreshDocs(dir, { ...createFetchers({ allowPrivateNetworks: values["allow-private"] }), ifMissing: values["if-missing"] });
+      if (result.libraries === 0) return void out("Nothing to refresh: the documentation is embedded in this server.");
+      result.warnings.forEach((w) => out(`  warning: ${w}`));
+      if (result.failed.length) out(`  warning: not downloaded: ${result.failed.join(", ")} – their docs stay unavailable until the next refresh.`);
       return void out(result.skipped ? `Docs cache present: ${result.path}` : `Downloaded ${result.pages} pages to ${result.path}`);
     }
     case "test": {

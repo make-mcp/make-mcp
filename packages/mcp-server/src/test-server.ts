@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { refreshDocs, type Fetcher, type Manifest } from "@make-mcp/core";
+import { needsRefresh, refreshDocs, type Fetcher, type Manifest } from "@make-mcp/core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -37,9 +37,10 @@ export async function testServer(dir: string, options: TestServerOptions): Promi
   const result: ServerTestResult = { ok: false, language, tools: [], resources: 0, resourceTemplates: 0, steps };
 
   try {
-    if (manifest.docs?.contentMode === "fetch-on-install") {
+    if (needsRefresh(manifest)) {
       const refreshed = await refreshDocs(dir, { ...options, ifMissing: true });
       steps.push(refreshed.skipped ? "docs cache present" : `downloaded ${refreshed.pages} doc pages to local cache`);
+      if (refreshed.failed.length) steps.push(`docs not downloaded: ${refreshed.failed.join(", ")}`);
     }
 
     if (!options.skipInstall) {

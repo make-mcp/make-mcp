@@ -31,6 +31,14 @@ import MiniSearch from "minisearch";
 // Data
 // ---------------------------------------------------------------------------
 
+interface Library {
+  name: string;
+  title: string;
+  version: string;
+  license?: string;
+  contentMode: "embedded" | "fetch-on-install";
+}
+
 interface Manifest {
   toolMode?: "endpoints" | "grouped";
   name: string;
@@ -40,7 +48,11 @@ interface Manifest {
   transport: "stdio" | "http";
   license?: string;
   generator: string;
+  generatedAt: string;
   docs?: { contentMode: "embedded" | "fetch-on-install"; sources: { kind: string; url: string; ref?: string }[] };
+  /** Whole-project server: several libraries, docs in data/corpus/<name>.json or the cache. */
+  libraries?: Library[];
+  symbols?: boolean;
   api?: boolean;
 }
 
@@ -51,6 +63,24 @@ interface DocPage {
   kind: "page" | "component";
   markdown: string;
   sourceUrl: string;
+  /** Library the page belongs to (whole-project servers). */
+  library?: string;
+}
+
+interface ChangeEntry {
+  version: string;
+  title: string;
+  date?: string;
+  markdown: string;
+  sourceUrl: string;
+}
+
+interface ApiSymbol {
+  name: string;
+  kind: string;
+  module: string;
+  signature: string;
+  doc?: string;
 }
 
 interface Param {
@@ -94,37 +124,78 @@ const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) 
 const manifest = readJson<Manifest>(join(root, "data/manifest.json"));
 const log = (message: string) => process.stderr.write(`[${manifest.name}] ${message}\n`);
 
+// One library for a single-target server; several (pages prefixed with "<library>/") for a whole-project server.
+const multi = manifest.libraries !== undefined;
+const libraries: Library[] =
+  manifest.libraries ??
+  (manifest.docs
+    ? [{ name: manifest.name, title: manifest.title, version: manifest.targetVersion, license: manifest.license, contentMode: manifest.docs.contentMode }]
+    : []);
+
 /** Same location the `make-mcp refresh` command writes to. */
-function corpusCachePath(): string {
+function corpusCachePath(lib: Library): string {
   const base = process.env.MAKE_MCP_CACHE_DIR ?? join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "make-mcp");
-  return join(base, manifest.name, manifest.targetVersion, "corpus.json");
+  return join(base, lib.name, lib.version, "corpus.json");
 }
 
-function loadPages(): DocPage[] | string {
-  if (!manifest.docs) return [];
-  const path = manifest.docs.contentMode === "embedded" ? join(root, "data/corpus.json") : corpusCachePath();
-  if (!existsSync(path)) {
-    return `Documentation has not been downloaded yet. Run \`npm run refresh\` in ${root} (fetches it from the original source on this machine).`;
+function loadDocs(): { pages: DocPage[]; changes: Map<string, ChangeEntry[]>; missing: string[] } {
+  const pages: DocPage[] = [];
+  const changes = new Map<string, ChangeEntry[]>();
+  const missing: string[] = [];
+  for (const lib of libraries) {
+    const path = lib.contentMode === "embedded" ? join(root, multi ? `data/corpus/${lib.name}.json` : "data/corpus.json") : corpusCachePath(lib);
+    if (!existsSync(path)) {
+      missing.push(lib.title);
+      continue;
+    }
+    const corpus = readJson<{ pages: DocPage[]; changes?: ChangeEntry[] }>(path);
+    for (const page of corpus.pages) pages.push(multi ? { ...page, path: `${lib.name}/${page.path}`, library: lib.name } : page);
+    if (corpus.changes?.length) changes.set(lib.name, corpus.changes);
   }
-  return readJson<{ pages: DocPage[] }>(path).pages;
+  return { pages, changes, missing };
 }
 
 // ---------------------------------------------------------------------------
 // Docs tools
 // ---------------------------------------------------------------------------
 
-const pagesOrError = loadPages();
-const pages = typeof pagesOrError === "string" ? [] : pagesOrError;
-const docsError = typeof pagesOrError === "string" ? pagesOrError : undefined;
-if (docsError) log(docsError);
+const loaded = loadDocs();
+const pages = loaded.pages;
+const changes = loaded.changes;
+const refreshHint = `Run \`npm run refresh\` in ${root} (fetches it from the original source on this machine).`;
+const docsError = loaded.missing.length > 0 && pages.length === 0 ? `Documentation has not been downloaded yet. ${refreshHint}` : undefined;
+if (loaded.missing.length > 0) log(`Documentation not downloaded yet: ${loaded.missing.join(", ")}. ${refreshHint}`);
+const symbols: Record<string, ApiSymbol[]> = manifest.symbols ? readJson<Record<string, ApiSymbol[]>>(join(root, "data/symbols.json")) : {};
 
 const search = new MiniSearch<DocPage & { id: string }>({
   fields: ["title", "section", "markdown"],
-  storeFields: ["path", "title", "section", "kind"],
+  storeFields: ["path", "title", "section", "kind", "library"],
   searchOptions: { boost: { title: 4, section: 2 }, prefix: true, fuzzy: 0.2 },
 });
 search.addAll(pages.map((p) => ({ ...p, id: p.path })));
 const components = pages.filter((p) => p.kind === "component");
+const libraryList = libraries.map((l) => `${l.title} ${l.version}`).join(", ");
+const libraryProperty: Record<string, object> = multi
+  ? { library: { type: "string", enum: libraries.map((l) => l.name), description: "Only this library (see list_topics)" } }
+  : {};
+
+/** Orders versions like 1.2.3 < 1.10.0; pre-releases (1.0.0-rc.1, 1.0.0b1) before the release. Mirrors server.py. */
+function versionKey(version: string): [number, number, number, number, string] {
+  const m = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(.*)$/.exec(version.trim());
+  if (!m) return [-1, 0, 0, 0, version];
+  const rest = m[4] ?? "";
+  return [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0), /^[-.]?(a|b|rc|alpha|beta|dev|pre|canary|next)/i.test(rest) ? 0 : 1, rest];
+}
+
+function compareVersions(a: string, b: string): number {
+  const ka = versionKey(a);
+  const kb = versionKey(b);
+  for (let i = 0; i < 4; i++) if (ka[i] !== kb[i]) return (ka[i] as number) - (kb[i] as number);
+  return ka[4] < kb[4] ? -1 : ka[4] > kb[4] ? 1 : 0;
+}
+
+const libraryOf = (args: Record<string, unknown>) => (typeof args.library === "string" && args.library ? args.library : undefined);
+const unknownLibrary = (name: string) => text(`Unknown library "${name}". Libraries: ${libraries.map((l) => l.name).join(", ")}.`, true);
 
 const text = (value: string, isError = false): CallToolResult => ({ content: [{ type: "text", text: value }], ...(isError ? { isError } : {}) });
 
@@ -140,16 +211,19 @@ function findPage(path: string): DocPage | undefined {
   return pages.find((p) => p.path === wanted);
 }
 
-const docsTools: Tool[] = manifest.docs
+const docsTools: Tool[] = libraries.length
   ? [
       {
         name: "search_docs",
-        description: `Full-text search in the ${manifest.title} ${manifest.targetVersion} documentation. Returns matching pages with paths for get_page.`,
+        description: multi
+          ? `Full-text search in the documentation of ${libraryList} (the versions this project uses). Returns matching pages with paths for get_page.`
+          : `Full-text search in the ${manifest.title} ${manifest.targetVersion} documentation. Returns matching pages with paths for get_page.`,
         inputSchema: {
           type: "object",
           properties: {
             query: { type: "string", description: "Search terms, e.g. a component, class name or concept" },
             limit: { type: "number", description: "Maximum results (default 5)" },
+            ...libraryProperty,
           },
           required: ["query"],
         },
@@ -163,8 +237,10 @@ const docsTools: Tool[] = manifest.docs
       },
       {
         name: "list_topics",
-        description: `Lists all ${manifest.title} documentation pages grouped by section.`,
-        inputSchema: { type: "object", properties: {} },
+        description: multi
+          ? "Lists the documentation pages of one library grouped by section; without library it lists the libraries."
+          : `Lists all ${manifest.title} documentation pages grouped by section.`,
+        inputSchema: { type: "object", properties: { ...libraryProperty } },
         annotations: { readOnlyHint: true, openWorldHint: false },
       },
       ...(components.length > 0
@@ -175,7 +251,41 @@ const docsTools: Tool[] = manifest.docs
                 .slice(0, 12)
                 .map((c) => c.title)
                 .join(", ")}${components.length > 12 ? ", …" : ""}).`,
-              inputSchema: { type: "object" as const, properties: { name: { type: "string" } }, required: ["name"] },
+              inputSchema: { type: "object" as const, properties: { name: { type: "string" }, ...libraryProperty }, required: ["name"] },
+              annotations: { readOnlyHint: true, openWorldHint: false },
+            },
+          ]
+        : []),
+      ...(changes.size > 0
+        ? [
+            {
+              name: "changes_since",
+              description: `Release notes after a version${multi ? "" : ` of ${manifest.title}`}: what changed, breaking changes and migration guides – for upgrades. Covers releases published up to ${manifest.generatedAt.slice(0, 10)}.`,
+              inputSchema: {
+                type: "object" as const,
+                properties: {
+                  version: { type: "string", description: `Version you are upgrading from (default: the version this server was generated for${multi ? "" : `, ${manifest.targetVersion}`})` },
+                  to: { type: "string", description: "Last version to include (default: newest known)" },
+                  ...libraryProperty,
+                },
+              },
+              annotations: { readOnlyHint: true, openWorldHint: false },
+            },
+          ]
+        : []),
+      ...(Object.keys(symbols).length > 0
+        ? [
+            {
+              name: "get_signature",
+              description: `Exact signature and doc comment of an exported function, class, type or constant of ${libraries
+                .filter((l) => symbols[l.name])
+                .map((l) => `${l.title} ${l.version}`)
+                .join(", ")} – read from the installed package.`,
+              inputSchema: {
+                type: "object" as const,
+                properties: { name: { type: "string", description: "Exported name, e.g. useState, BaseModel or Client.get" }, ...libraryProperty },
+                required: ["name"],
+              },
               annotations: { readOnlyHint: true, openWorldHint: false },
             },
           ]
@@ -187,16 +297,20 @@ function callDocsTool(name: string, args: Record<string, unknown>): CallToolResu
   if (!docsTools.some((t) => t.name === name)) return undefined;
   if (docsError) return text(docsError, true);
 
+  const library = libraryOf(args);
+  if (library && !libraries.some((l) => l.name === library)) return unknownLibrary(library);
+
   if (name === "search_docs") {
     const query = String(args.query ?? "");
     const limit = Math.min(Number(args.limit ?? 5) || 5, 20);
-    const hits = search.search(query).slice(0, limit);
+    const hits = search.search(query, library ? { filter: (r) => r.library === library } : {}).slice(0, limit);
     if (hits.length === 0) return text(`No results for "${query}". Try list_topics.`);
     return text(
       hits
         .map((hit) => {
           const page = findPage(String(hit.path))!;
-          return `## ${page.title}${page.section ? ` (${page.section})` : ""}\npath: ${page.path}\n${snippet(page.markdown, query)}`;
+          const where = [page.library, page.section].filter(Boolean).join(" · ");
+          return `## ${page.title}${where ? ` (${where})` : ""}\npath: ${page.path}\n${snippet(page.markdown, query)}`;
         })
         .join("\n\n"),
     );
@@ -206,21 +320,100 @@ function callDocsTool(name: string, args: Record<string, unknown>): CallToolResu
     return page ? text(`${page.markdown}\n\n_Source: ${page.sourceUrl}_`) : text(`Unknown path "${String(args.path)}". Use search_docs or list_topics.`, true);
   }
   if (name === "list_topics") {
+    if (multi && !library) {
+      const lines = libraries.map((l) => {
+        const count = pages.filter((p) => p.library === l.name).length;
+        return `- ${l.title} ${l.version} — library \`${l.name}\`, ${count ? `${count} pages` : "not downloaded yet"}${changes.has(l.name) ? ", release notes" : ""}${symbols[l.name] ? ", signatures" : ""}`;
+      });
+      return text(`# Libraries\n${lines.join("\n")}\n\nCall list_topics with library for its pages.`);
+    }
     const groups = new Map<string, DocPage[]>();
-    for (const page of pages) groups.set(page.section ?? "General", [...(groups.get(page.section ?? "General") ?? []), page]);
+    for (const page of pages.filter((p) => !library || p.library === library)) {
+      groups.set(page.section ?? "General", [...(groups.get(page.section ?? "General") ?? []), page]);
+    }
     return text([...groups].map(([section, list]) => `## ${section}\n${list.map((p) => `- ${p.title} — \`${p.path}\``).join("\n")}`).join("\n\n"));
   }
   if (name === "get_component") {
     const wanted = String(args.name ?? "").toLowerCase().trim();
-    const exact = components.find((c) => c.title.toLowerCase() === wanted || c.path.split("/").pop() === wanted.replace(/\s+/g, "-"));
+    const exact = components.find(
+      (c) => (!library || c.library === library) && (c.title.toLowerCase() === wanted || c.path.split("/").pop() === wanted.replace(/\s+/g, "-")),
+    );
     if (exact) return text(`${exact.markdown}\n\n_Source: ${exact.sourceUrl}_`);
     const similar = search
-      .search(wanted, { filter: (r) => r.kind === "component" })
+      .search(wanted, { filter: (r) => r.kind === "component" && (!library || r.library === library) })
       .slice(0, 5)
       .map((r) => String(r.title));
     return text(`No component named "${String(args.name)}".${similar.length ? ` Did you mean: ${similar.join(", ")}?` : ""}`, true);
   }
+  if (name === "changes_since") return changesSince(args, library);
+  if (name === "get_signature") return getSignature(args, library);
   return undefined;
+}
+
+function changesSince(args: Record<string, unknown>, library: string | undefined): CallToolResult {
+  const name = library ?? (changes.size === 1 ? [...changes.keys()][0] : undefined);
+  if (!name) return text(`Pass library – release notes exist for: ${[...changes.keys()].join(", ")}.`, true);
+  const entries = changes.get(name);
+  const lib = libraries.find((l) => l.name === name)!;
+  if (!entries) return text(`No release notes for ${lib.title}. Release notes exist for: ${[...changes.keys()].join(", ")}.`, true);
+  const from = String(args.version || lib.version).replace(/^v/, "");
+  const to = typeof args.to === "string" && args.to ? args.to.replace(/^v/, "") : undefined;
+  const selected = entries.filter((e) => compareVersions(e.version, from) > 0 && (!to || compareVersions(e.version, to) <= 0));
+  if (selected.length === 0) {
+    return text(
+      `No ${lib.title} release after ${from}${to ? ` up to ${to}` : ""} in this server's data. Newest known: ${entries[entries.length - 1]!.version} ` +
+        `(collected ${manifest.generatedAt.slice(0, 10)} – regenerate the server for later releases).`,
+    );
+  }
+  const guides = pages
+    .filter((p) => (!multi || p.library === name) && /migrat|upgrad|breaking/i.test(`${p.title} ${p.path}`))
+    .slice(0, 8)
+    .map((p) => `- ${p.title} — \`${p.path}\``);
+  const parts = [
+    `# ${lib.title}: ${selected.length} release${selected.length === 1 ? "" : "s"} after ${from}${to ? ` up to ${to}` : ""}`,
+    ...(guides.length ? [`Migration guides in the docs (get_page):\n${guides.join("\n")}`] : []),
+  ];
+  let size = parts.join("\n\n").length;
+  let shown = 0;
+  for (const e of selected) {
+    const heading = e.title !== e.version && e.title !== `v${e.version}` ? `${e.version} – ${e.title}` : e.version;
+    const block = `## ${heading}${e.date ? ` (${e.date})` : ""}\n${e.markdown}\n\n_Source: ${e.sourceUrl}_`;
+    if (shown > 0 && size + block.length > MAX_RESPONSE_CHARS) break;
+    parts.push(block);
+    size += block.length;
+    shown++;
+  }
+  if (shown < selected.length) {
+    parts.push(`… ${selected.length - shown} later release${selected.length - shown === 1 ? "" : "s"} not shown – call again with version ${selected[shown - 1]!.version}.`);
+  }
+  return text(parts.join("\n\n"));
+}
+
+function getSignature(args: Record<string, unknown>, library: string | undefined): CallToolResult {
+  const wanted = String(args.name ?? "").trim();
+  const scope = library ? [library] : Object.keys(symbols);
+  if (library && !symbols[library]) return text(`No API signatures for ${library}. Available for: ${Object.keys(symbols).join(", ")}.`, true);
+  const all = scope.flatMap((lib) => (symbols[lib] ?? []).map((s) => ({ lib, s })));
+  let hits = all.filter((c) => c.s.name === wanted);
+  if (hits.length === 0) hits = all.filter((c) => c.s.name.toLowerCase() === wanted.toLowerCase());
+  // Namespace members: "useState" finds "React.useState".
+  if (hits.length === 0) hits = all.filter((c) => c.s.name.endsWith(`.${wanted}`));
+  // TypeScript members ("Client.get") are part of their class or interface declaration.
+  if (hits.length === 0 && wanted.includes(".")) hits = all.filter((c) => c.s.name === wanted.split(".")[0]);
+  if (hits.length > 0) {
+    return text(
+      hits
+        .slice(0, 5)
+        .map(({ lib, s }) => {
+          const language = /\.d\.[mc]?ts$/.test(s.module) ? "ts" : "python";
+          return `## ${s.name} (${s.kind}${multi ? `, ${lib}` : ""})\nmodule: ${s.module}\n\n\`\`\`${language}\n${s.signature}\n\`\`\`${s.doc ? `\n\n${s.doc}` : ""}`;
+        })
+        .join("\n\n---\n\n"),
+    );
+  }
+  const needle = wanted.toLowerCase();
+  const similar = [...new Set(all.filter((c) => c.s.name.toLowerCase().includes(needle)).map((c) => c.s.name))].slice(0, 15);
+  return text(`No exported symbol "${wanted}".${similar.length ? ` Similar: ${similar.join(", ")}.` : " Use search_docs for concepts and guides."}`, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +677,11 @@ function matchResource(uri: string): { ep: Endpoint; args: Record<string, string
 // ---------------------------------------------------------------------------
 
 const instructions = [
-  manifest.docs ? `Documentation for ${manifest.title} ${manifest.targetVersion}: use search_docs first, then get_page${components.length ? " or get_component" : ""}.` : "",
+  libraries.length
+    ? `Documentation for ${multi ? libraryList : `${manifest.title} ${manifest.targetVersion}`}: use search_docs first${multi ? " (optionally with library)" : ""}, then get_page${components.length ? " or get_component" : ""}.`
+    : "",
+  changes.size > 0 ? "For upgrades: changes_since lists the release notes after a version." : "",
+  Object.keys(symbols).length > 0 ? "For exact parameters and types: get_signature." : "",
   api
     ? grouped
       ? `${api.title} API (${api.endpoints.length} operations): list_operations → describe_operation → call_operation. Calls use the configured credentials.`
@@ -542,7 +739,7 @@ function createMcpServer(): Server {
     const templates: ResourceTemplate[] = resourceEndpoints
       .filter((ep) => ep.path.includes("{"))
       .map((ep) => ({ uriTemplate: apiUri(ep.path), name: ep.summary ?? ep.id, mimeType: "application/json" }));
-    if (manifest.docs) templates.push({ uriTemplate: `docs://${manifest.name}/{path}`, name: "Documentation page", mimeType: "text/markdown" });
+    if (libraries.length) templates.push({ uriTemplate: `docs://${manifest.name}/{path}`, name: "Documentation page", mimeType: "text/markdown" });
     return { resourceTemplates: templates };
   });
 

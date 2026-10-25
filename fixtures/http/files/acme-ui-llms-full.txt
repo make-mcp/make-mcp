@@ -1,0 +1,15 @@
+# Acme UI
+
+> Acme UI components (fictional library for make-mcp's tests).
+
+## Getting started
+
+Install acme-ui and call createTheme() once at startup. Every component reads the theme tokens.
+
+## Button
+
+Use Button for actions. Variants: solid (default) and ghost. Sizes: sm, md, lg.
+
+## Migrating to v3
+
+Version 3 removes label strings from Button: pass children instead. Theme radius moved to tokens.radius.

@@ -1,0 +1,1 @@
+{ "name": "acme-ui", "version": "2.0.0", "description": "Acme UI components", "license": "MIT", "repository": { "type": "git", "url": "git+https://github.com/acme/acme-ui.git" }, "homepage": "https://acme-ui.example.com" }
