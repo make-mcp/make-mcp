@@ -35,5 +35,5 @@
     "url": "git+https://github.com/make-mcp/make-mcp.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/make-mcp/make-mcp#readme"
+  "homepage": "https://make-mcp.net"
 }

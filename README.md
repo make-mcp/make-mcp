@@ -1,6 +1,6 @@
 # make-mcp
 
-Generate an MCP server for **any library, product or API** – from its `llms.txt`, documentation site,
+**[make-mcp.net](https://make-mcp.net)** · Generate an MCP server for **any library, product or API** – from its `llms.txt`, documentation site,
 OpenAPI/Swagger spec or source code. Version-exact, offline-capable, and no API key needed when you run it
 from your coding agent.
 
