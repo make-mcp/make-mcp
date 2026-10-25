@@ -14,7 +14,7 @@ import { applyRequestedVersion, openApiToSpec, parseApiDocument } from "../parse
 import { extractionToSpec, planExtraction, validateExtraction, type ExtractionPlan, type ExtractionResult, type ValidatedExtraction } from "../extract/prose-api.js";
 
 export const GENERATOR_PACKAGE = "@make-mcp/cli";
-export const GENERATOR_VERSION = "0.3.1";
+export const GENERATOR_VERSION = "0.4.0";
 const TOOL_WARNING_THRESHOLD = 80;
 /** Above this many operations the API is exposed through list/describe/call meta tools. */
 export const GROUP_THRESHOLD = 40;

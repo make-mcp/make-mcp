@@ -1,6 +1,6 @@
 {
   "name": "make-mcp",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Generate MCP servers for any library, product or API from its docs, llms.txt, OpenAPI spec or source code – version-exact, offline-capable, no API key needed.",
   "author": { "name": "make-mcp contributors" },
   "homepage": "https://make-mcp.net",

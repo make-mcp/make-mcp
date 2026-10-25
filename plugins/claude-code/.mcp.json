@@ -2,7 +2,7 @@
   "mcpServers": {
     "make-mcp": {
       "command": "npx",
-      "args": ["-y", "@make-mcp/cli@0.3.1", "mcp"]
+      "args": ["-y", "@make-mcp/cli@0.4.0", "mcp"]
     }
   }
 }
