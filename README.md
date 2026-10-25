@@ -1,5 +1,13 @@
 # make-mcp
 
+[![npm](https://img.shields.io/npm/v/@make-mcp/cli?label=%40make-mcp%2Fcli&color=cb3837&logo=npm)](https://www.npmjs.com/package/@make-mcp/cli)
+[![npm downloads](https://img.shields.io/npm/dm/@make-mcp/cli?color=cb3837)](https://www.npmjs.com/package/@make-mcp/cli)
+[![CI](https://github.com/make-mcp/make-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/make-mcp/make-mcp/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+**📦 npm: [`@make-mcp/cli`](https://www.npmjs.com/package/@make-mcp/cli)** – `npx @make-mcp/cli create <library>` ·
+also [`@make-mcp/core`](https://www.npmjs.com/package/@make-mcp/core) and [`@make-mcp/mcp-server`](https://www.npmjs.com/package/@make-mcp/mcp-server)
+
 **[make-mcp.net](https://make-mcp.net)** · Generate an MCP server for **any library, product or API** – from its `llms.txt`, documentation site,
 OpenAPI/Swagger spec or source code. Version-exact, offline-capable, and no API key needed when you run it
 from your coding agent.
