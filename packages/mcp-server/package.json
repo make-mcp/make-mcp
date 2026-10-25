@@ -28,5 +28,5 @@
     "url": "git+https://github.com/make-mcp/make-mcp.git",
     "directory": "packages/mcp-server"
   },
-  "homepage": "https://make-mcp.net"
+  "homepage": "https://github.com/make-mcp/make-mcp#readme"
 }
