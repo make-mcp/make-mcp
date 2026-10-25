@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { MakeMcpError } from "../errors.js";
 
@@ -9,6 +9,8 @@ export interface Workspace {
   exists(relPath: string): boolean;
   readText(relPath: string): string | undefined;
   readJson<T = unknown>(relPath: string): T | undefined;
+  /** Entry names of a directory, or [] if it does not exist. */
+  list(relDir: string): string[];
 }
 
 export function createWorkspace(root: string): Workspace {
@@ -35,6 +37,10 @@ export function createWorkspace(root: string): Workspace {
     resolve: resolvePath,
     exists: (relPath) => existsSync(resolvePath(relPath)),
     readText,
+    list(relDir) {
+      const path = resolvePath(relDir);
+      return existsSync(path) && statSync(path).isDirectory() ? readdirSync(path).sort() : [];
+    },
     readJson<T>(relPath: string) {
       const text = readText(relPath);
       if (text === undefined) return undefined;

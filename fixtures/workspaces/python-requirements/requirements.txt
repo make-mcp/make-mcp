@@ -1,0 +1,4 @@
+# pinned for production
+fastapi==0.112.2
+httpx[http2]>=0.27  # client
+-e .

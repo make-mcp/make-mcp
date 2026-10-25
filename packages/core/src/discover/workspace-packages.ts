@@ -1,5 +1,6 @@
 import { parse as parseYaml } from "yaml";
 import type { Workspace } from "../fs/workspace.js";
+import { isPythonWorkspace } from "./python-packages.js";
 
 export interface InstalledPackage {
   name: string;
@@ -86,7 +87,7 @@ export function findInstalledPackage(ws: Workspace, name: string): InstalledPack
 
 export function detectWorkspaceLanguage(ws: Workspace): "ts" | "py" | undefined {
   const isNode = ws.exists("package.json");
-  const isPython = ["pyproject.toml", "requirements.txt", "setup.py", "uv.lock"].some((f) => ws.exists(f));
+  const isPython = isPythonWorkspace(ws);
   if (isNode && !isPython) return "ts";
   if (isPython && !isNode) return "py";
   return undefined;

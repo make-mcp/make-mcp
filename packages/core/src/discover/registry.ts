@@ -1,4 +1,5 @@
 import type { Fetcher } from "../fetch/types.js";
+import { normalizePythonName } from "./python-packages.js";
 
 export interface PackageMetadata {
   registry: "npm" | "pypi";
@@ -65,12 +66,13 @@ interface PypiInfo {
 }
 
 export async function pypiMetadata(name: string, version: string | undefined, fetcher: Fetcher): Promise<PackageMetadata | undefined> {
-  const latestRes = await fetcher(`https://pypi.org/pypi/${encodeURIComponent(name)}/json`, { accept: "application/json" });
+  const project = encodeURIComponent(normalizePythonName(name));
+  const latestRes = await fetcher(`https://pypi.org/pypi/${project}/json`, { accept: "application/json" });
   if (!latestRes.ok) return undefined;
   const latest = JSON.parse(latestRes.body) as PypiInfo;
   let data = latest;
   if (version && version !== latest.info.version) {
-    const res = await fetcher(`https://pypi.org/pypi/${encodeURIComponent(name)}/${encodeURIComponent(version)}/json`);
+    const res = await fetcher(`https://pypi.org/pypi/${project}/${encodeURIComponent(version)}/json`);
     if (res.ok) data = JSON.parse(res.body) as PypiInfo;
   }
 

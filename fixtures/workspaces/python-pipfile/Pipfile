@@ -1,0 +1,5 @@
+[packages]
+fastapi = "*"
+
+[dev-packages]
+pytest = "*"

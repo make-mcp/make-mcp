@@ -1,0 +1,5 @@
+{
+  "_meta": { "hash": { "sha256": "fixture" } },
+  "default": { "fastapi": { "version": "==0.111.1" } },
+  "develop": { "pytest": { "version": "==8.3.4" } }
+}

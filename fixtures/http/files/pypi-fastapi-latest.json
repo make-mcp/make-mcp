@@ -1,0 +1,15 @@
+{
+  "info": {
+    "name": "fastapi",
+    "version": "0.118.0",
+    "summary": "FastAPI framework, high performance, easy to learn, fast to code, ready for production",
+    "license": "MIT",
+    "license_expression": null,
+    "home_page": null,
+    "project_urls": {
+      "Homepage": "https://github.com/fastapi/fastapi",
+      "Documentation": "https://fastapi.tiangolo.com/",
+      "Repository": "https://github.com/fastapi/fastapi"
+    }
+  }
+}

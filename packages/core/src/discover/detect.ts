@@ -9,6 +9,7 @@ import { slugify } from "../parse/markdown-split.js";
 import { listRepoTags, matchVersionTag, parseRepoUrl, repoWebUrl } from "../parse/repo-docs.js";
 import { probeDocs, type DocsProbe } from "./probe.js";
 import { npmMetadata, pypiMetadata, type PackageMetadata } from "./registry.js";
+import { findInstalledPythonPackage, matchPythonDependency } from "./python-packages.js";
 import { detectWorkspaceLanguage, findInstalledPackage, matchDependency } from "./workspace-packages.js";
 
 export interface DetectOptions {
@@ -92,14 +93,18 @@ export async function detectContext(options: DetectOptions): Promise<Findings> {
     };
   }
 
-  const depName = matchDependency(ws, options.target);
-  const packageName = depName ?? options.target.toLowerCase().replace(/\s+/g, "-");
-  const installed = findInstalledPackage(ws, packageName);
-  const meta = await packageMetadata(packageName, installed?.exact ? installed.version : undefined, language === "py", options.apiFetcher);
+  const npmDep = matchDependency(ws, options.target);
+  const pyDep = npmDep ? undefined : matchPythonDependency(ws, options.target);
+  const packageName = npmDep ?? pyDep ?? options.target.toLowerCase().replace(/\s+/g, "-");
+  const preferPython = pyDep !== undefined || (npmDep === undefined && language === "py");
+  const installed = preferPython ? findInstalledPythonPackage(ws, packageName) : findInstalledPackage(ws, packageName);
+  const meta = await packageMetadata(packageName, installed?.exact ? installed.version : undefined, preferPython, options.apiFetcher);
 
   let version: Findings["version"];
   if (installed?.exact) version = { value: installed.version, confidence: "high", source: installed.source };
-  else if (installed) {
+  else if (installed && "range" in installed && installed.range) {
+    version = { value: installed.version, confidence: "medium", source: `${installed.source} range ${installed.range}` };
+  } else if (installed) {
     const min = semver.minVersion(installed.version)?.version;
     version = { value: min ?? installed.version, confidence: "medium", source: `package.json range ${installed.version}` };
   } else if (meta) version = { value: meta.latest, confidence: "low", source: `${meta.registry} latest` };
