@@ -5,7 +5,7 @@ import pino from "pino";
 import { z } from "zod";
 import { IntakeSessions } from "./sessions.js";
 
-export const SERVER_VERSION = "0.2.0";
+export const SERVER_VERSION = "0.3.0";
 const log = pino({ name: "make-mcp", level: process.env.LOG_LEVEL ?? "info" }, pino.destination(2));
 
 const FLOW = `Workflow (follow it in order, talk to the user in their language):
