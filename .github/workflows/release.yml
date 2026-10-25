@@ -33,9 +33,14 @@ jobs:
       - run: npm run test:e2e
       # Skips versions that are already on npm, so a failed release can simply be re-run.
       - name: Publish
+        shell: bash
         run: |
+          set -o pipefail
           for p in core mcp-server cli; do
             v=$(node -p "require('./packages/$p/package.json').version")
             if npm view "@make-mcp/$p@$v" version >/dev/null 2>&1; then echo "@make-mcp/$p@$v already published"; continue; fi
-            npm publish -w "@make-mcp/$p"
+            # Fresh publishes are staged by npm for a few minutes; a re-run then gets a 409 for that version.
+            if ! npm publish -w "@make-mcp/$p" 2>&1 | tee publish.log; then exit 1; fi
+            if grep -q "Cannot publish over previously" publish.log; then echo "@make-mcp/$p@$v already staged"; continue; fi
+            if grep -q "npm error" publish.log; then exit 1; fi
           done
