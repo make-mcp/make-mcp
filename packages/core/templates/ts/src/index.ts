@@ -31,6 +31,7 @@ import MiniSearch from "minisearch";
 // ---------------------------------------------------------------------------
 
 interface Manifest {
+  toolMode?: "endpoints" | "grouped";
   name: string;
   title: string;
   targetVersion: string;
@@ -278,6 +279,77 @@ const apiTools: Tool[] = (api?.endpoints ?? []).map((ep) => ({
   },
 }));
 
+// Large APIs: three meta tools instead of one tool per operation keep the client's context small.
+const grouped = manifest.toolMode === "grouped";
+const endpointById = new Map((api?.endpoints ?? []).map((ep) => [ep.id, ep]));
+const hasDestructive = (api?.endpoints ?? []).some((ep) => ep.method === "delete");
+
+const groupedTools: Tool[] = [
+  {
+    name: "list_operations",
+    description: `List ${api?.title ?? "API"} operations (id, method, path, summary). Filter by tag and/or keyword, then use describe_operation.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        tag: { type: "string", description: "Only operations with this tag" },
+        query: { type: "string", description: "Keyword matched against id, path and summary" },
+      },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "describe_operation",
+    description: "Parameters, request body schema and description of one operation.",
+    inputSchema: { type: "object", properties: { operation: { type: "string", description: "Operation id from list_operations" } }, required: ["operation"] },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  },
+  {
+    name: "call_operation",
+    description: "Call an operation against the live API. Arguments follow the schema returned by describe_operation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: { type: "string", description: "Operation id from list_operations" },
+        arguments: { type: "object", description: "Path, query and header parameters by name, plus `body` for the request body" },
+      },
+      required: ["operation"],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: hasDestructive, openWorldHint: true },
+  },
+];
+
+function listOperations(args: Record<string, unknown>): CallToolResult {
+  const tag = typeof args.tag === "string" ? args.tag.toLowerCase() : undefined;
+  const query = typeof args.query === "string" ? args.query.toLowerCase() : undefined;
+  const matches = (api?.endpoints ?? []).filter(
+    (ep) =>
+      (!tag || ep.tags.some((t) => t.toLowerCase() === tag)) &&
+      (!query || [ep.id, ep.path, ep.summary ?? ""].some((s) => s.toLowerCase().includes(query))),
+  );
+  if (matches.length === 0) {
+    const tags = [...new Set((api?.endpoints ?? []).flatMap((ep) => ep.tags))].sort();
+    return text(`No operations match. Tags: ${tags.join(", ") || "none"}`);
+  }
+  const lines = matches.slice(0, 200).map((ep) => `${ep.id} – ${ep.method.toUpperCase()} ${ep.path}${ep.summary ? ` – ${ep.summary}` : ""}${ep.deprecated ? " (deprecated)" : ""}`);
+  if (matches.length > lines.length) lines.push(`… ${matches.length - lines.length} more, narrow with tag or query`);
+  return text(lines.join("\n"));
+}
+
+function describeOperation(id: unknown): CallToolResult {
+  const ep = endpointById.get(String(id));
+  if (!ep) return text(`Unknown operation: ${String(id)}. Use list_operations.`, true);
+  const detail = {
+    operation: ep.id,
+    request: `${ep.method.toUpperCase()} ${ep.path}`,
+    summary: ep.summary,
+    description: ep.description,
+    tags: ep.tags,
+    deprecated: ep.deprecated || undefined,
+    arguments: toolSchema(ep),
+  };
+  return text(JSON.stringify(detail, null, 2));
+}
+
 let oauthToken: { value: string; expiresAt: number } | undefined;
 
 async function authorize(url: URL, headers: Record<string, string>): Promise<void> {
@@ -406,7 +478,11 @@ function matchResource(uri: string): { ep: Endpoint; args: Record<string, string
 
 const instructions = [
   manifest.docs ? `Documentation for ${manifest.title} ${manifest.targetVersion}: use search_docs first, then get_page${components.length ? " or get_component" : ""}.` : "",
-  api ? `${api.title} API (${api.endpoints.length} operations). Tools call the live API with the configured credentials.` : "",
+  api
+    ? grouped
+      ? `${api.title} API (${api.endpoints.length} operations): list_operations → describe_operation → call_operation. Calls use the configured credentials.`
+      : `${api.title} API (${api.endpoints.length} operations). Tools call the live API with the configured credentials.`
+    : "",
 ]
   .filter(Boolean)
   .join(" ");
@@ -418,16 +494,26 @@ function createMcpServer(): Server {
     { capabilities: { tools: {}, resources: {} }, instructions },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...docsTools, ...apiTools] }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...docsTools, ...(grouped ? groupedTools : apiTools)] }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     const docsResult = callDocsTool(request.params.name, args);
     if (docsResult) return docsResult;
-    const ep = api?.endpoints.find((e) => e.id === request.params.name);
-    if (!ep) return text(`Unknown tool: ${request.params.name}`, true);
+    if (grouped && request.params.name === "list_operations") return listOperations(args);
+    if (grouped && request.params.name === "describe_operation") return describeOperation(args.operation);
+    const ep = grouped
+      ? request.params.name === "call_operation"
+        ? endpointById.get(String(args.operation))
+        : undefined
+      : endpointById.get(request.params.name);
+    if (!ep) {
+      return grouped && request.params.name === "call_operation"
+        ? text(`Unknown operation: ${String(args.operation)}. Use list_operations.`, true)
+        : text(`Unknown tool: ${request.params.name}`, true);
+    }
     try {
-      return await callEndpoint(ep, args);
+      return await callEndpoint(ep, grouped ? ((args.arguments ?? {}) as Record<string, unknown>) : args);
     } catch (err) {
       return text(`Request failed: ${(err as Error).message}`, true);
     }

@@ -27,7 +27,18 @@ The documentation is **not** included in this package. It is downloaded from the
 <% if (it.api) { %>
 ## API tools
 
+<% if (it.api.toolMode === "grouped") { %>
+<%= it.api.endpointCount %> operations of **<%= it.api.title %>** (`<%= it.api.baseUrl %>`), exposed through three tools so the
+agent's context stays small:
+
+| Tool | Purpose |
+|---|---|
+| `list_operations` | Find operations by tag or keyword |
+| `describe_operation` | Parameters and request body of one operation |
+| `call_operation` | Call an operation with arguments |
+<% } else { %>
 <%= it.api.endpointCount %> operations of **<%= it.api.title %>** (`<%= it.api.baseUrl %>`), one tool per operation.
+<% } %>
 Side-effect-free GET operations are additionally exposed as resources (`api://<%= it.name %>/…`).
 
 ### Configuration

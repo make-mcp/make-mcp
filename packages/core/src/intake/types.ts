@@ -13,6 +13,8 @@ export interface Finding<T> {
 
 export type TargetKind = "api" | "library" | "unknown";
 export type Mode = "docs" | "api" | "both";
+/** One MCP tool per operation, or three meta tools (list/describe/call) for large APIs. */
+export type ToolMode = "endpoints" | "grouped";
 
 export interface Findings {
   target: string;
@@ -52,6 +54,8 @@ export const IntakeAnswersSchema = z
     transport: z.enum(["stdio", "http"]),
     outDir: z.string().min(1),
     register: z.enum(["project", "global", "none"]),
+    /** API tool layout; not asked – defaults to "grouped" above 40 operations. */
+    tools: z.enum(["endpoints", "grouped"]),
   })
   .partial();
 export type IntakeAnswers = z.infer<typeof IntakeAnswersSchema>;
@@ -89,6 +93,8 @@ export interface ResolvedIntake {
   transport: "stdio" | "http";
   outDir: string;
   register: "project" | "global" | "none";
+  /** Explicit API tool layout; undefined lets the generator pick by operation count. */
+  toolMode?: ToolMode;
   repositoryUrl?: string;
   homepage?: string;
   description?: string;

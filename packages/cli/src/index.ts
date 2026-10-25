@@ -41,6 +41,7 @@ Options for create/generate:
   --mode <docs|api|both>   --lang <ts|py>   --version <v>   --out <dir>
   --docs <url|none>     --code <url|path|none>   --auth <none|apiKey|bearer|basic|oauth2>
   --scope <all|tag,…>   --transport <stdio|http>   --register <project|global|none>
+  --tools <endpoints|grouped>   (default: grouped above 40 API operations)
   --client <claude-code|cursor>   --zip   --yes   --allow-private   --fixtures <dir>
 `;
 
@@ -61,6 +62,7 @@ const { positionals, values } = parseArgs({
     scope: { type: "string" },
     transport: { type: "string" },
     register: { type: "string" },
+    tools: { type: "string" },
     client: { type: "string", default: "claude-code" },
     zip: { type: "boolean", default: false },
     yes: { type: "boolean", short: "y", default: false },
@@ -83,6 +85,7 @@ function answersFromFlags(): Record<string, string> {
     scope: values.scope,
     transport: values.transport,
     register: values.register,
+    tools: values.tools,
   };
   return Object.fromEntries(Object.entries(map).filter((e): e is [string, string] => e[1] !== undefined));
 }

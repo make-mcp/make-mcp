@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,6 +133,59 @@ describe("Petstore API server (TypeScript)", async () => {
       expect(tools.find((t) => t.name === "add_pet")!.inputSchema.required).toEqual(["body"]);
       const { resourceTemplates } = await client.listResourceTemplates();
       expect(resourceTemplates.map((t) => t.uriTemplate)).toEqual(["api://swagger-petstore/pet/{petId}"]);
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("Petstore API server with grouped tools (TypeScript)", async () => {
+  const findings = await detectContext({
+    target: "https://petstore3.example.com/openapi.yaml",
+    workspaceRoot: fixtures("workspaces/empty"),
+    apiFetcher,
+    contentFetcher,
+  });
+  const resolved = resolveIntake(findings, { language: "ts", register: "none", tools: "grouped", outDir: join(e2eRoot, "petstore-grouped-mcp") });
+  const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
+  writeProject(project);
+
+  const requests: string[] = [];
+  const api = createServer((req, res) => {
+    requests.push(`${req.method} ${req.url}`);
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: 7, name: "Rex" }));
+  });
+  await new Promise<void>((done) => api.listen(0, "127.0.0.1", done));
+  afterAll(() => api.close());
+  const baseUrl = `http://127.0.0.1:${(api.address() as AddressInfo).port}/api/v3`;
+
+  it("exposes three meta tools and documents them", () => {
+    expect(project.manifest.toolMode).toBe("grouped");
+    expect(project.tools).toEqual(["list_operations", "describe_operation", "call_operation"]);
+    expect(project.files["README.md"]).toContain("`call_operation`");
+  });
+
+  it("lists, describes and calls operations", async () => {
+    const client = await connect(project.outDir, { SWAGGER_PETSTORE_BASE_URL: baseUrl });
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.map((t) => t.name)).toEqual(project.tools);
+      expect(tools.find((t) => t.name === "call_operation")!.annotations?.destructiveHint).toBe(true);
+
+      const list = firstText(await client.callTool({ name: "list_operations", arguments: { tag: "pet" } }));
+      expect(list).toContain("get_pet_by_id – GET /pet/{petId}");
+      expect(list).not.toContain("get_inventory");
+
+      const detail = JSON.parse(firstText(await client.callTool({ name: "describe_operation", arguments: { operation: "get_pet_by_id" } })));
+      expect(detail.arguments.required).toEqual(["petId"]);
+
+      const call = await client.callTool({ name: "call_operation", arguments: { operation: "get_pet_by_id", arguments: { petId: 7 } } });
+      expect(call.isError).toBeFalsy();
+      expect(firstText(call)).toContain('"name": "Rex"');
+      expect(requests).toEqual(["GET /api/v3/pet/7"]);
+
+      const unknown = await client.callTool({ name: "call_operation", arguments: { operation: "nope" } });
+      expect(unknown.isError).toBe(true);
     } finally {
       await client.close();
     }

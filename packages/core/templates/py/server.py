@@ -231,6 +231,96 @@ API_TOOLS = [
     for ep in ENDPOINTS
 ]
 
+# Large APIs: three meta tools instead of one tool per operation keep the client's context small.
+GROUPED = MANIFEST.get("toolMode") == "grouped"
+ENDPOINT_BY_ID = {ep["id"]: ep for ep in ENDPOINTS}
+
+GROUPED_TOOLS = [
+    types.Tool(
+        name="list_operations",
+        description=f"List {API['title'] if API else 'API'} operations (id, method, path, summary). "
+        "Filter by tag and/or keyword, then use describe_operation.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "tag": {"type": "string", "description": "Only operations with this tag"},
+                "query": {"type": "string", "description": "Keyword matched against id, path and summary"},
+            },
+        },
+        annotations=types.ToolAnnotations(read_only_hint=True, open_world_hint=False),
+    ),
+    types.Tool(
+        name="describe_operation",
+        description="Parameters, request body schema and description of one operation.",
+        input_schema={
+            "type": "object",
+            "properties": {"operation": {"type": "string", "description": "Operation id from list_operations"}},
+            "required": ["operation"],
+        },
+        annotations=types.ToolAnnotations(read_only_hint=True, open_world_hint=False),
+    ),
+    types.Tool(
+        name="call_operation",
+        description="Call an operation against the live API. Arguments follow the schema returned by describe_operation.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "operation": {"type": "string", "description": "Operation id from list_operations"},
+                "arguments": {
+                    "type": "object",
+                    "description": "Path, query and header parameters by name, plus `body` for the request body",
+                },
+            },
+            "required": ["operation"],
+        },
+        annotations=types.ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=any(ep["method"] == "delete" for ep in ENDPOINTS),
+            open_world_hint=True,
+        ),
+    ),
+]
+
+
+def list_operations(args: dict[str, Any]) -> types.CallToolResult:
+    tag = str(args["tag"]).lower() if args.get("tag") else None
+    query = str(args["query"]).lower() if args.get("query") else None
+    matches = [
+        ep
+        for ep in ENDPOINTS
+        if (not tag or any(t.lower() == tag for t in ep["tags"]))
+        and (not query or any(query in (s or "").lower() for s in (ep["id"], ep["path"], ep.get("summary"))))
+    ]
+    if not matches:
+        tags = sorted({t for ep in ENDPOINTS for t in ep["tags"]})
+        return text(f"No operations match. Tags: {', '.join(tags) or 'none'}")
+    lines = [
+        f"{ep['id']} – {ep['method'].upper()} {ep['path']}"
+        + (f" – {ep['summary']}" if ep.get("summary") else "")
+        + (" (deprecated)" if ep["deprecated"] else "")
+        for ep in matches[:200]
+    ]
+    if len(matches) > len(lines):
+        lines.append(f"… {len(matches) - len(lines)} more, narrow with tag or query")
+    return text("\n".join(lines))
+
+
+def describe_operation(operation: Any) -> types.CallToolResult:
+    ep = ENDPOINT_BY_ID.get(str(operation))
+    if not ep:
+        return text(f"Unknown operation: {operation}. Use list_operations.", True)
+    detail = {
+        "operation": ep["id"],
+        "request": f"{ep['method'].upper()} {ep['path']}",
+        "summary": ep.get("summary"),
+        "description": ep.get("description"),
+        "tags": ep["tags"],
+        **({"deprecated": True} if ep["deprecated"] else {}),
+        "arguments": tool_schema(ep),
+    }
+    return text(json.dumps({k: v for k, v in detail.items() if v is not None}, indent=2))
+
+
 _oauth: dict[str, Any] = {}
 
 
@@ -346,7 +436,7 @@ def match_resource(uri: str) -> tuple[dict[str, Any], dict[str, str]] | None:
 
 
 async def on_list_tools(_ctx: Any, _params: Any) -> types.ListToolsResult:
-    return types.ListToolsResult(tools=[*DOCS_TOOLS, *API_TOOLS])
+    return types.ListToolsResult(tools=[*DOCS_TOOLS, *(GROUPED_TOOLS if GROUPED else API_TOOLS)])
 
 
 async def on_call_tool(_ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
@@ -354,9 +444,21 @@ async def on_call_tool(_ctx: Any, params: types.CallToolRequestParams) -> types.
     result = call_docs_tool(params.name, args)
     if result:
         return result
-    ep = next((e for e in ENDPOINTS if e["id"] == params.name), None)
-    if not ep:
-        return text(f"Unknown tool: {params.name}", True)
+    if GROUPED and params.name == "list_operations":
+        return list_operations(args)
+    if GROUPED and params.name == "describe_operation":
+        return describe_operation(args.get("operation"))
+    if GROUPED:
+        if params.name != "call_operation":
+            return text(f"Unknown tool: {params.name}", True)
+        ep = ENDPOINT_BY_ID.get(str(args.get("operation")))
+        if not ep:
+            return text(f"Unknown operation: {args.get('operation')}. Use list_operations.", True)
+        args = args.get("arguments") or {}
+    else:
+        ep = ENDPOINT_BY_ID.get(params.name)
+        if not ep:
+            return text(f"Unknown tool: {params.name}", True)
     try:
         return await call_endpoint(ep, args)
     except Exception as err:  # noqa: BLE001 – surface any transport error to the client
@@ -409,7 +511,13 @@ INSTRUCTIONS = " ".join(
     s
     for s in [
         f"Documentation for {TITLE} {VERSION}: use search_docs first, then get_page." if MANIFEST.get("docs") else "",
-        f"{API['title']} API ({len(ENDPOINTS)} operations). Tools call the live API." if API else "",
+        (
+            f"{API['title']} API ({len(ENDPOINTS)} operations): list_operations → describe_operation → call_operation."
+            if GROUPED
+            else f"{API['title']} API ({len(ENDPOINTS)} operations). Tools call the live API."
+        )
+        if API
+        else "",
     ]
     if s
 )

@@ -6,7 +6,7 @@ import { Eta } from "eta";
 import { strToU8, zipSync } from "fflate";
 import { MakeMcpError } from "../errors.js";
 import type { Fetcher } from "../fetch/types.js";
-import type { ResolvedIntake } from "../intake/types.js";
+import type { ResolvedIntake, ToolMode } from "../intake/types.js";
 import type { ApiSpec, AuthScheme, DocCorpus, SourceRef } from "../ir/index.js";
 import { contentModeFor, type ContentMode } from "../license.js";
 import { loadDocCorpus, type DocsSource } from "../parse/docs-corpus.js";
@@ -15,6 +15,9 @@ import { applyRequestedVersion, openApiToSpec, parseApiDocument } from "../parse
 export const GENERATOR_PACKAGE = "@make-mcp/cli";
 export const GENERATOR_VERSION = "0.1.0";
 const TOOL_WARNING_THRESHOLD = 80;
+/** Above this many operations the API is exposed through list/describe/call meta tools. */
+export const GROUP_THRESHOLD = 40;
+export const GROUPED_TOOLS = ["list_operations", "describe_operation", "call_operation"] as const;
 
 const templatesDir = fileURLToPath(new URL("../../templates/", import.meta.url));
 const eta = new Eta({ views: templatesDir, autoEscape: false, autoTrim: false });
@@ -38,6 +41,7 @@ export interface Manifest {
   generatedAt: string;
   docs?: { contentMode: ContentMode; sources: SourceRef[]; candidates: DocsSource[] };
   api?: boolean;
+  toolMode?: ToolMode;
 }
 
 export interface EnvVar {
@@ -139,9 +143,6 @@ async function buildApiSpec(resolved: ResolvedIntake, options: GenerateOptions, 
     spec = { ...spec, endpoints: spec.endpoints.filter((ep) => ep.tags.some((t) => tags.includes(t.toLowerCase()))) };
   }
   if (spec.auth.length === 0 && resolved.auth !== "none") spec = { ...spec, auth: fallbackAuth(resolved.auth, resolved.envPrefix) };
-  if (spec.endpoints.length > TOOL_WARNING_THRESHOLD) {
-    warnings.push(`${spec.endpoints.length} API tools – many clients work better with fewer. Consider narrowing the scope by tags.`);
-  }
   return spec;
 }
 
@@ -211,6 +212,11 @@ export async function generateProject(resolved: ResolvedIntake, options: Generat
     );
   }
 
+  const toolMode: ToolMode | undefined = spec ? (resolved.toolMode ?? (spec.endpoints.length > GROUP_THRESHOLD ? "grouped" : "endpoints")) : undefined;
+  if (spec && toolMode === "endpoints" && spec.endpoints.length > TOOL_WARNING_THRESHOLD) {
+    warnings.push(`${spec.endpoints.length} API tools – many clients work better with fewer. Use grouped tools or narrow the scope by tags.`);
+  }
+
   const manifest: Manifest = {
     name: resolved.slug,
     title: spec?.title && resolved.mode === "api" ? spec.title : resolved.target,
@@ -221,7 +227,7 @@ export async function generateProject(resolved: ResolvedIntake, options: Generat
     generator: `${GENERATOR_PACKAGE}@${GENERATOR_VERSION}`,
     generatedAt: now.toISOString(),
     ...(corpus && contentMode ? { docs: { contentMode, sources: corpus.sources, candidates: resolved.docs } } : {}),
-    ...(spec ? { api: true } : {}),
+    ...(spec ? { api: true, toolMode } : {}),
   };
 
   const envVars = envVarsFor(spec, resolved.envPrefix);
@@ -229,7 +235,7 @@ export async function generateProject(resolved: ResolvedIntake, options: Generat
   const components = corpus?.pages.filter((p) => p.kind === "component").length ?? 0;
   const tools = [
     ...(corpus ? ["search_docs", "get_page", "list_topics", ...(components ? ["get_component"] : [])] : []),
-    ...(spec?.endpoints.map((ep) => ep.id) ?? []),
+    ...(spec ? (toolMode === "grouped" ? GROUPED_TOOLS : spec.endpoints.map((ep) => ep.id)) : []),
   ];
 
   const view = {
@@ -240,7 +246,7 @@ export async function generateProject(resolved: ResolvedIntake, options: Generat
     generatedAt: now.toISOString().slice(0, 10),
     license: resolved.license,
     docs: corpus && contentMode ? { contentMode, sources: corpus.sources, pageCount: corpus.pages.length, componentCount: components } : undefined,
-    api: spec ? { title: spec.title, baseUrl: spec.baseUrl, endpointCount: spec.endpoints.length } : undefined,
+    api: spec ? { title: spec.title, baseUrl: spec.baseUrl, endpointCount: spec.endpoints.length, toolMode } : undefined,
     envVars,
     secretVars: envVars.filter((v) => v.secret),
     run,
