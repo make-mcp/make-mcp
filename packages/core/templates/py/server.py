@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import bisect
+import hmac
 import json
 import math
 import os
@@ -19,7 +20,7 @@ import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 import anyio
 import httpx
@@ -72,7 +73,7 @@ PAGES, DOCS_ERROR = load_pages()
 if DOCS_ERROR:
     log(DOCS_ERROR)
 COMPONENTS = [p for p in PAGES if p["kind"] == "component"]
-TOKEN = re.compile(r"[a-z0-9]+")
+TOKEN = re.compile(r"\w+", re.UNICODE)
 
 
 class SearchIndex:
@@ -420,7 +421,16 @@ async def authorize(client: httpx.AsyncClient, headers: dict[str, str], params: 
 
 
 async def call_endpoint(ep: dict[str, Any], args: dict[str, Any]) -> types.CallToolResult:
-    path = re.sub(r"\{([^}]+)\}", lambda m: quote(str(args.get(m.group(1), "")), safe=""), ep["path"])
+    def path_value(match: re.Match[str]) -> str:
+        name, value = match.group(1), args.get(match.group(1))
+        if value is None or value == "":
+            raise ValueError(f'Missing path parameter "{name}"')
+        # "." and ".." would make the URL resolve to another endpoint than the one this tool describes.
+        if str(value) in (".", ".."):
+            raise ValueError(f'Invalid path parameter "{name}"')
+        return quote(str(value), safe="")
+
+    path = re.sub(r"\{([^}]+)\}", path_value, ep["path"])
     url = base_url().rstrip("/") + path
     headers: dict[str, str] = {"accept": "application/json, text/plain;q=0.9, */*;q=0.5"}
     params: dict[str, Any] = {}
@@ -617,9 +627,23 @@ def run_http(legacy_sse: bool) -> None:
         sys.exit(1)
     manager = StreamableHTTPSessionManager(app=create_server(), stateless=True)
 
+    allowed = {"localhost", "127.0.0.1", "[::1]", "::1"} | {
+        h.strip().lower() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()
+    }
+
+    def local_request(headers: dict[bytes, bytes]) -> bool:
+        """Without a token only local callers: Host and Origin must be loopback (no DNS rebinding from web pages)."""
+        host = re.sub(r":\d+$", "", headers.get(b"host", b"").decode().lower())
+        if host not in allowed:
+            return False
+        origin = headers.get(b"origin", b"").decode()
+        return not origin or (urlparse(origin).hostname or "").lower() in allowed
+
     def authorized(scope: Any) -> bool:
-        auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode()
-        return not token or auth == f"Bearer {token}"
+        headers = dict(scope.get("headers") or [])
+        if not token:
+            return os.environ.get("MCP_ALLOW_UNAUTHENTICATED") == "1" or local_request(headers)
+        return hmac.compare_digest(headers.get(b"authorization", b"").decode(), f"Bearer {token}")
 
     class Guarded:
         """ASGI app that checks MCP_AUTH_TOKEN (a class, so Starlette routes it as a raw ASGI app)."""

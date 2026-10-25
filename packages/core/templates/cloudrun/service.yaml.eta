@@ -37,8 +37,13 @@ spec:
                   key: latest
 <% } %>
 <% for (const v of it.plainVars) { %>
+<% if (v.required) { %>
+            - name: <%= v.name %>   # <%= v.description %>
+              value: "SET-ME"
+<% } else { %>
             # - name: <%= v.name %>   # <%= v.description %>
             #   value: ""
+<% } %>
 <% } %>
           startupProbe:
             httpGet:

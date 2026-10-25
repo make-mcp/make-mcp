@@ -5,6 +5,7 @@
  * or customise this file freely: it has no dependency on the generator.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -414,7 +415,13 @@ function encodeBody(contentType: string, body: unknown): BodyInit {
 }
 
 async function callEndpoint(ep: Endpoint, args: Record<string, unknown>): Promise<CallToolResult> {
-  const path = ep.path.replace(/\{([^}]+)\}/g, (_, name: string) => encodeURIComponent(String(args[name] ?? "")));
+  const path = ep.path.replace(/\{([^}]+)\}/g, (_, name: string) => {
+    const value = args[name];
+    if (value === undefined || value === null || value === "") throw new Error(`Missing path parameter "${name}"`);
+    // "." and ".." would make the URL resolve to another endpoint than the one this tool describes.
+    if (String(value) === "." || String(value) === "..") throw new Error(`Invalid path parameter "${name}"`);
+    return encodeURIComponent(String(value));
+  });
   const url = new URL(baseUrl().replace(/\/$/, "") + path);
   const headers: Record<string, string> = { accept: "application/json, text/plain;q=0.9, */*;q=0.5" };
   const strategy = api!.versionStrategy;
@@ -560,14 +567,40 @@ function createMcpServer(): Server {
 // Transports: stdio (default), Streamable HTTP, legacy SSE
 // ---------------------------------------------------------------------------
 
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]", "::1"];
+
+/** Without a token only local callers are allowed: Host and Origin must be loopback, so web pages cannot reach the server via DNS rebinding. */
+function isLocalRequest(req: IncomingMessage): boolean {
+  const allowed = [...LOOPBACK, ...(process.env.MCP_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)];
+  const host = (req.headers.host ?? "").toLowerCase().replace(/:\d+$/, "");
+  if (!allowed.includes(host)) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return allowed.includes(new URL(origin).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function isAuthorized(req: IncomingMessage): boolean {
   const token = process.env.MCP_AUTH_TOKEN;
-  return !token || req.headers.authorization === `Bearer ${token}`;
+  if (!token) return process.env.MCP_ALLOW_UNAUTHENTICATED === "1" || isLocalRequest(req);
+  const given = Buffer.from(req.headers.authorization ?? "");
+  const expected = Buffer.from(`Bearer ${token}`);
+  return given.length === expected.length && timingSafeEqual(given, expected);
 }
+
+const MAX_BODY = 4 * 1024 * 1024;
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY) throw Object.assign(new Error("request body too large"), { status: 413 });
+    chunks.push(chunk as Buffer);
+  }
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : undefined;
 }
@@ -617,7 +650,7 @@ async function startHttp(legacySse: boolean): Promise<void> {
       res.writeHead(404).end();
     } catch (err) {
       log(`HTTP error: ${(err as Error).message}`);
-      if (!res.headersSent) res.writeHead(500).end();
+      if (!res.headersSent) res.writeHead((err as { status?: number }).status ?? 500).end();
     }
   });
 

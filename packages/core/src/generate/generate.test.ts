@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -188,6 +188,11 @@ describe("Petstore API server with grouped tools (TypeScript)", async () => {
 
       const unknown = await client.callTool({ name: "call_operation", arguments: { operation: "nope" } });
       expect(unknown.isError).toBe(true);
+
+      const traversal = await client.callTool({ name: "call_operation", arguments: { operation: "get_pet_by_id", arguments: { petId: ".." } } });
+      expect(traversal.isError).toBe(true);
+      expect(firstText(traversal)).toContain('Invalid path parameter "petId"');
+      expect(requests).toEqual(["GET /api/v3/pet/7"]);
     } finally {
       await client.close();
     }
@@ -305,3 +310,42 @@ describe("Dockerfile for docs that must not be redistributed", async () => {
     expect(project.files.Dockerfile).toContain("Keep the image in a private registry");
   });
 });
+
+describe("generated HTTP server without a token", async () => {
+  const findings = await detectContext({ target: "daisyUI", workspaceRoot: fixtures("workspaces/daisyui"), apiFetcher, contentFetcher });
+  const resolved = resolveIntake(findings, { mode: "docs", register: "none", outDir: join(e2eRoot, "daisyui-http-mcp") });
+  const project = await generateProject(resolved, { apiFetcher, contentFetcher, workspaceRoot: e2eRoot, now });
+  writeProject(project);
+
+  it("only answers local callers (no DNS rebinding from web pages)", { timeout: 30_000 }, async () => {
+    const port = 41_000 + Math.floor(Math.random() * 1000);
+    const { spawn } = await import("node:child_process");
+    const child = spawn(process.execPath, [join(project.outDir, "src/index.ts")], {
+      env: { ...process.env, MCP_TRANSPORT: "http", PORT: String(port), HOST: "127.0.0.1", MCP_AUTH_TOKEN: "" },
+      stdio: "ignore",
+    });
+    try {
+      for (let i = 0; i < 50; i++) {
+        if (await fetch(`http://127.0.0.1:${port}/healthz`).then((r) => r.ok, () => false)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const post = (headers: Record<string, string>) =>
+        new Promise<number>((done) => {
+          const req = request(
+            { host: "127.0.0.1", port, path: "/mcp", method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers } },
+            (res) => {
+              res.resume();
+              done(res.statusCode ?? 0);
+            },
+          );
+          req.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
+        });
+      expect(await post({ host: "attacker.example:" + port })).toBe(401);
+      expect(await post({ host: `127.0.0.1:${port}`, origin: "https://attacker.example" })).toBe(401);
+      expect(await post({ host: `localhost:${port}` })).toBe(200);
+    } finally {
+      child.kill();
+    }
+  });
+});
+

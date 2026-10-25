@@ -32,4 +32,8 @@ the server refuses to start on a public interface without `MCP_AUTH_TOKEN`.
    ```
 
 `--allow-unauthenticated` makes the URL reachable for MCP clients; access is still limited by the bearer token.
-To use Cloud Run IAM instead, deploy without it and set `MCP_ALLOW_UNAUTHENTICATED=1`.
+With `skaffold run`, grant that once: `gcloud run services add-iam-policy-binding <%= it.service %> --member=allUsers --role=roles/run.invoker`.
+
+Prefer Cloud Run IAM over a shared token? IAM uses the same `Authorization` header, so drop the token instead:
+deploy without `--allow-unauthenticated`, remove `MCP_AUTH_TOKEN` from the secrets (and from `deploy/cloudrun/service.yaml`)
+and set `MCP_ALLOW_UNAUTHENTICATED=1`. Clients then need an identity token (`gcloud auth print-identity-token`).

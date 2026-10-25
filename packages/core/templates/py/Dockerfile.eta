@@ -9,6 +9,7 @@ RUN npx -y <%= it.generator %> refresh .
 
 <% } %>
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+RUN useradd --create-home --uid 10001 app
 WORKDIR /app
 COPY pyproject.toml ./
 RUN uv sync --no-dev --no-install-project
@@ -18,6 +19,8 @@ COPY data ./data
 COPY --from=docs /cache /app/.cache
 ENV MAKE_MCP_CACHE_DIR=/app/.cache
 <% } %>
-ENV MCP_TRANSPORT=http HOST=0.0.0.0 PORT=8080
+ENV MCP_TRANSPORT=http HOST=0.0.0.0 PORT=8080 UV_NO_CACHE=1
+RUN chown -R app /app
+USER app
 EXPOSE 8080
 CMD ["uv", "run", "--no-sync", "server.py"]
