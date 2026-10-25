@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MakeMcpError } from "../errors.js";
 import type { ApiSpec, AuthScheme, DocCorpus, DocPage, Endpoint, Param } from "../ir/index.js";
 import { endpointId, uniqueIds } from "../parse/openapi.js";
 
@@ -175,15 +176,48 @@ const pathShape = (path: string) =>
     .replace(/\{[^}/]+\}|:[a-z_][\w-]*|<[^>/]+>/g, "{}")
     .replace(/\/+$/, "") || "/";
 
-/** Every path-like token in the page, plus each suffix starting at a slash (covers full URLs and versioned prefixes). */
-function pathShapesIn(markdown: string): Set<string> {
-  const shapes = new Set<string>();
-  for (const token of markdown.match(/\/[A-Za-z0-9_\-{}:<>.~/]*/g) ?? []) {
-    const clean = token.replace(/[.,]+$/, "");
-    for (let i = 0; i < clean.length; i++) if (clean[i] === "/" && clean[i + 1] !== "/") shapes.add(pathShape(clean.slice(i)));
+const PATH_TOKEN = /\/[A-Za-z0-9_\-{}:<>.~/]*/g;
+const MAX_TOKEN = 300;
+const MAX_SUFFIXES = 12;
+
+/** Shapes of a path-like token and of each suffix starting at a slash (covers full URLs and versioned prefixes). */
+function tokenShapes(token: string): string[] {
+  const clean = token.slice(0, MAX_TOKEN).replace(/[.,]+$/, "");
+  const shapes: string[] = [];
+  for (let i = 0; i < clean.length && shapes.length < MAX_SUFFIXES; i++) {
+    if (clean[i] === "/" && clean[i + 1] !== "/") shapes.push(pathShape(clean.slice(i)));
   }
   return shapes;
 }
+
+function pathShapesIn(markdown: string): Set<string> {
+  return new Set((markdown.match(PATH_TOKEN) ?? []).flatMap(tokenShapes));
+}
+
+/** "get /notes/{}"-style pairs: a method followed by a path within a short window ("`POST /notes`", "send a POST request to /notes"). */
+function methodPathPairs(markdown: string): Set<string> {
+  const pairs = new Set<string>();
+  for (const m of markdown.matchAll(/\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/gi)) {
+    const window = markdown.slice(m.index + m[0].length, m.index + m[0].length + 80).split("\n")[0]!;
+    for (const token of window.match(PATH_TOKEN) ?? []) {
+      for (const shape of tokenShapes(token)) pairs.add(`${m[1]!.toLowerCase()} ${shape}`);
+    }
+  }
+  return pairs;
+}
+
+/** example.com for api.example.com and docs.example.com – good enough to tie an API host to its docs. */
+function siteOf(url: string): string | undefined {
+  try {
+    const labels = new URL(url).hostname.toLowerCase().split(".");
+    return labels.slice(-2).join(".");
+  } catch {
+    return undefined;
+  }
+}
+
+const RESERVED_HEADERS = new Set(["host", "authorization", "cookie", "content-length", "content-type", "transfer-encoding", "connection", "proxy-authorization"]);
+const PARAM_NAME = /^[A-Za-z0-9_.[\]-]{1,64}$/;
 
 /** Converts `:id` / `<id>` to `{id}` and strips scheme/host if the model returned a full URL. */
 export function canonicalPath(raw: string): string | undefined {
@@ -195,9 +229,10 @@ export function canonicalPath(raw: string): string | undefined {
       return undefined;
     }
   }
+  // Only a whole segment ":id" is a parameter; "/things/{id}:cancel" keeps its custom verb.
   path = path
     .split(/[?#]/)[0]!
-    .replace(/:([A-Za-z_][\w-]*)/g, "{$1}")
+    .replace(/(?<=\/):([A-Za-z_][\w-]*)(?=\/|$)/g, "{$1}")
     .replace(/<([^>/]+)>/g, "{$1}");
   if (!path.startsWith("/")) return undefined;
   return path.length > 1 ? path.replace(/\/+$/, "") : path;
@@ -222,6 +257,11 @@ export function validateExtraction(results: ExtractionResult[], corpus: DocCorpu
   const pages = new Map(corpus.pages.map((p) => [p.path, p]));
   const pageText = new Map<string, string>();
   const pageShapes = new Map<string, Set<string>>();
+  const pagePairs = new Map<string, Set<string>>();
+  const pairsOf = (page: DocPage) => {
+    if (!pagePairs.has(page.path)) pagePairs.set(page.path, methodPathPairs(page.markdown));
+    return pagePairs.get(page.path)!;
+  };
   const textOf = (page: DocPage) => {
     if (!pageText.has(page.path)) pageText.set(page.path, normalizeText(page.markdown));
     return pageText.get(page.path)!;
@@ -256,8 +296,15 @@ export function validateExtraction(results: ExtractionResult[], corpus: DocCorpu
       reject(`path not found on page ${page.path}`);
       continue;
     }
-    if (!new RegExp(`\\b${op.method}\\b`, "i").test(page.markdown)) {
-      reject(`method ${op.method.toUpperCase()} not mentioned on page ${page.path}`);
+    if (!pairsOf(page).has(`${op.method} ${pathShape(path)}`)) {
+      reject(`${op.method.toUpperCase()} is not documented for this path on page ${page.path}`);
+      continue;
+    }
+    const badParam = (op.params ?? []).find(
+      (p) => !PARAM_NAME.test(p.name) || (p.in === "header" && (RESERVED_HEADERS.has(p.name.toLowerCase()) || !page.markdown.includes(p.name))),
+    );
+    if (badParam) {
+      reject(`parameter "${badParam.name}" is not allowed or not on page ${page.path}`);
       continue;
     }
     const key = `${op.method} ${pathShape(path)}`;
@@ -266,17 +313,34 @@ export function validateExtraction(results: ExtractionResult[], corpus: DocCorpu
     operations.push({ ...op, path });
   }
 
-  // Base URL and auth are only taken over when the documentation itself states them.
+  // Base URL and auth are only taken over when the documentation itself states them, and only for the docs' own
+  // site – credentials must never be steered to another host by text on a page.
   const corpusText = corpus.pages.map((p) => p.markdown).join("\n");
+  const docsSite = siteOf(corpus.sources[0]?.url ?? "");
   let baseUrl: string | undefined;
   for (const candidate of results.map((r) => r.baseUrl?.trim().replace(/\/+$/, "")).filter((u): u is string => Boolean(u))) {
-    if (/^https?:\/\/\S+$/i.test(candidate) && corpusText.includes(candidate)) {
+    if (!/^https?:\/\/\S+$/i.test(candidate) || !corpusText.includes(candidate)) {
+      notes.push(`Ignored base URL ${candidate}: not found in the documentation.`);
+    } else if (docsSite && siteOf(candidate) !== docsSite) {
+      notes.push(`Ignored base URL ${candidate}: it is not on the documentation's site (${docsSite}); set it yourself if it is right.`);
+    } else {
       baseUrl = candidate;
       break;
     }
-    notes.push(`Ignored base URL ${candidate}: not found in the documentation.`);
   }
-  const auth = results.map((r) => r.auth).find((a) => a && a.type !== "none" && (!a.name || corpusText.includes(a.name)));
+  const apiSite = baseUrl ? siteOf(baseUrl) : docsSite;
+  const mentioned = (name: string) => new RegExp(`(^|[^A-Za-z0-9-])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9-]|$)`).test(corpusText);
+  let auth = results
+    .map((r) => r.auth)
+    .find((a) => a && a.type !== "none" && (!a.name || (PARAM_NAME.test(a.name) && !RESERVED_HEADERS.has(a.name.toLowerCase()) && mentioned(a.name))));
+  if (auth?.tokenUrl) {
+    const ok = /^https:\/\/\S+$/i.test(auth.tokenUrl) && corpusText.includes(auth.tokenUrl) && siteOf(auth.tokenUrl) === apiSite;
+    if (!ok) {
+      notes.push(`Ignored OAuth token URL ${auth.tokenUrl}: it must be https, stated in the docs and on the API's site.`);
+      auth = { ...auth };
+      delete auth.tokenUrl;
+    }
+  }
 
   return { operations, rejected, ...(baseUrl ? { baseUrl } : {}), ...(auth ? { auth } : {}), notes };
 }
@@ -398,6 +462,11 @@ export function extractionToSpec(validated: ValidatedExtraction, corpus: DocCorp
 /** Lenient JSON parsing for model output: strips code fences and surrounding prose. */
 export function parseModelJson(text: string): unknown {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1];
-  const candidate = fenced ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
-  return JSON.parse(candidate);
+  const start = text.indexOf("{");
+  const candidate = fenced ?? (start >= 0 ? text.slice(start, text.lastIndexOf("}") + 1) : "");
+  try {
+    return JSON.parse(candidate);
+  } catch (err) {
+    throw new MakeMcpError("SPEC_INVALID", `The answer is not valid JSON (${(err as Error).message}); answer with the JSON object only.`);
+  }
 }

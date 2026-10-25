@@ -1,5 +1,6 @@
 import { parse as parseYaml } from "yaml";
 import type { Workspace } from "../fs/workspace.js";
+import { isSafeVersion } from "../safe-version.js";
 import { isPythonWorkspace } from "./python-packages.js";
 
 export interface InstalledPackage {
@@ -73,11 +74,11 @@ export function findInstalledPackage(ws: Workspace, name: string): InstalledPack
   ] as const;
   for (const [source, read] of lockfiles) {
     const version = read(ws, name);
-    if (version) return { name, version, source, exact: true };
+    if (version && isSafeVersion(version)) return { name, version, source, exact: true };
   }
 
   const installed = ws.readJson<PackageJson>(`node_modules/${name}/package.json`);
-  if (installed?.version) return { name, version: installed.version, source: "node_modules", exact: true };
+  if (installed?.version && isSafeVersion(installed.version)) return { name, version: installed.version, source: "node_modules", exact: true };
 
   const pkg = ws.readJson<PackageJson>("package.json");
   const range = pkg?.dependencies?.[name] ?? pkg?.devDependencies?.[name] ?? pkg?.peerDependencies?.[name];

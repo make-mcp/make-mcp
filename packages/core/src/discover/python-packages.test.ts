@@ -14,7 +14,7 @@ import {
   parseRequirement,
   pythonDependencies,
 } from "./python-packages.js";
-import { detectWorkspaceLanguage } from "./workspace-packages.js";
+import { detectWorkspaceLanguage, findInstalledPackage } from "./workspace-packages.js";
 
 const fixtures = (path: string) => fileURLToPath(new URL(`../../../../fixtures/${path}`, import.meta.url));
 const ws = (name: string) => createWorkspace(fixtures(`workspaces/${name}`));
@@ -86,3 +86,33 @@ describe("detectContext in a Python project", async () => {
     expect(findings.version).toEqual({ value: "0.110.0", confidence: "medium", source: "pyproject.toml range >=0.110.0" });
   });
 });
+
+describe("untrusted project files", () => {
+  const project = (files: Record<string, string>) => {
+    const root = mkdtempSync(join(tmpdir(), "make-mcp-untrusted-"));
+    for (const [name, content] of Object.entries(files)) writeFileSync(join(root, name), content);
+    return createWorkspace(root);
+  };
+
+  it("reads pip-compile output with hashes and continuation lines", () => {
+    const ws = project({ "requirements.txt": "requests==2.31.0 \\\n    --hash=sha256:abc\nhttpx==0.28.1 --hash=sha256:def\n" });
+    expect(findInstalledPythonPackage(ws, "requests")).toMatchObject({ version: "2.31.0", exact: true });
+    expect(findInstalledPythonPackage(ws, "httpx")).toMatchObject({ version: "0.28.1", exact: true });
+  });
+
+  it("treats bare Poetry and Pipfile versions as exact pins and ignores wildcards", () => {
+    const ws = project({ "pyproject.toml": '[tool.poetry.dependencies]\nfastapi = "0.110.2"\nhttpx = "==0.27.*"\n' });
+    expect(findInstalledPythonPackage(ws, "fastapi")).toMatchObject({ version: "0.110.2", exact: true });
+    expect(findInstalledPythonPackage(ws, "httpx")?.exact).not.toBe(true);
+  });
+
+  it("never returns versions that could leave a cache directory", () => {
+    const py = project({ "requirements.txt": "evil==1/../../../../tmp/x\n", "uv.lock": '[[package]]\nname = "other"\nversion = "../.."\n' });
+    // Only the harmless lower bound "1" survives, never the path.
+    expect(findInstalledPythonPackage(py, "evil")).toMatchObject({ version: "1", exact: false });
+    expect(findInstalledPythonPackage(py, "other")).toBeUndefined();
+    const npm = project({ "package.json": '{"dependencies":{"x":"1.0.0"}}', "package-lock.json": '{"packages":{"node_modules/x":{"version":"../../x"}}}' });
+    expect(findInstalledPackage(npm, "x")).toMatchObject({ exact: false });
+  });
+});
+

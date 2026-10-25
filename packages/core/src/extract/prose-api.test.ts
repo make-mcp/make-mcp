@@ -82,11 +82,14 @@ describe("canonicalPath and parseModelJson", () => {
     expect(canonicalPath("/notes/<noteId>/")).toBe("/notes/{noteId}");
     expect(canonicalPath("https://api.x.com/v1/notes?limit=1")).toBe("/v1/notes");
     expect(canonicalPath("notes")).toBeUndefined();
+    expect(canonicalPath("/v1/things/{id}:cancel")).toBe("/v1/things/{id}:cancel");
+    expect(canonicalPath("/items:search")).toBe("/items:search");
   });
 
   it("reads JSON wrapped in prose or code fences", () => {
     expect(parseModelJson('Sure! {"operations": []} Done.')).toEqual({ operations: [] });
     expect(parseModelJson('```json\n{"a": 1}\n```')).toEqual({ a: 1 });
+    expect(() => parseModelJson("I could not find any endpoints.")).toThrow(/not valid JSON/);
   });
 });
 
@@ -137,7 +140,7 @@ describe("Acme Notes: API from prose documentation", async () => {
     ]);
     expect(validated.rejected.map((r) => `${r.method} ${r.path}: ${r.reason.split(" on page")[0]}`)).toEqual([
       "GET /admin/users: quote not found",
-      "PATCH /notes/{id}: method PATCH not mentioned",
+      "PATCH /notes/{id}: PATCH is not documented for this path",
     ]);
     expect(spec.baseUrl).toBe("https://api.notes.example.com/v1");
     expect(spec.auth).toEqual([{ type: "apiKey", in: "header", name: "X-Api-Key", envVar: "NOTES_API_KEY" }]);
@@ -209,5 +212,54 @@ describe("createLlmFromEnv", () => {
     expect(createLlmFromEnv({ ANTHROPIC_API_KEY: "k" })?.label).toBe("Anthropic claude-sonnet-5-5");
     expect(createLlmFromEnv({ MAKE_MCP_LLM_BASE_URL: "http://localhost:11434/v1", MAKE_MCP_LLM_MODEL: "qwen3" })?.label).toBe("qwen3 via localhost:11434");
     expect(() => createLlmFromEnv({ OPENAI_API_KEY: "k" })).toThrow(/MAKE_MCP_LLM_MODEL/);
+  });
+});
+
+describe("validation guards against steering and invented details", () => {
+  const page = (path: string, markdown: string) => ({ path, title: path, kind: "page" as const, markdown, sourceUrl: `https://docs.example.com/${path}` });
+  const corpus: DocCorpus = {
+    title: "t",
+    pages: [
+      page("users", "`GET /users/{id}` returns a user. You can delete your account in the settings.\nAPI: https://api.example.com/v2"),
+      page("auth", "Send `X-Api-Key`. Tokens: https://auth.example.com/oauth/token – mirror: https://evil.example.net/token and https://evil.example.net/v2"),
+    ],
+    sources: [{ kind: "website", url: "https://docs.example.com/", fetchedAt: "2026-10-25T00:00:00Z" }],
+  };
+  const quote = "`GET /users/{id}` returns a user.";
+
+  it("needs the method next to the path, not just somewhere in the prose", () => {
+    const result = validateExtraction(
+      [{ operations: [{ method: "delete", path: "/users/{id}", summary: "Delete user", source: { page: "users", quote } }] }],
+      corpus,
+    );
+    expect(result.rejected[0]?.reason).toMatch(/DELETE is not documented for this path/);
+  });
+
+  it("rejects reserved or undocumented header parameters", () => {
+    const op = (name: string) => ({ method: "get" as const, path: "/users/{id}", summary: "Get user", params: [{ name, in: "header" as const }], source: { page: "users", quote } });
+    const result = validateExtraction([{ operations: [op("Authorization"), op("X-Forwarded-For")] }], corpus);
+    expect(result.operations).toEqual([]);
+    expect(result.rejected).toHaveLength(2);
+  });
+
+  it("only keeps base and token URLs on the documentation's own site", () => {
+    const foreign = validateExtraction(
+      [{ baseUrl: "https://evil.example.net/v2", auth: { type: "oauth2", tokenUrl: "https://evil.example.net/token" }, operations: [] }],
+      corpus,
+    );
+    expect(foreign.baseUrl).toBeUndefined();
+    expect(foreign.auth).toEqual({ type: "oauth2" });
+    expect(foreign.notes.join(" ")).toMatch(/not on the documentation's site/);
+
+    const own = validateExtraction(
+      [{ baseUrl: "https://api.example.com/v2", auth: { type: "oauth2", tokenUrl: "https://auth.example.com/oauth/token" }, operations: [] }],
+      corpus,
+    );
+    expect(own).toMatchObject({ baseUrl: "https://api.example.com/v2", auth: { tokenUrl: "https://auth.example.com/oauth/token" } });
+  });
+
+  it("ignores API key names that are not in the docs", () => {
+    expect(validateExtraction([{ auth: { type: "apiKey", name: "key" }, operations: [] }], corpus).auth).toBeUndefined();
+    expect(validateExtraction([{ auth: { type: "apiKey", name: "X-Api-Key" }, operations: [] }], corpus).auth?.name).toBe("X-Api-Key");
   });
 });

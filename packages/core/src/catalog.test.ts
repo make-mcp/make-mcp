@@ -7,6 +7,8 @@ import { createFixtureFetch } from "./fetch/fixture-fetch.js";
 import { createPoliteFetch } from "./fetch/polite-fetch.js";
 import { nextQuestions } from "./intake/questions.js";
 import { resolveIntake } from "./intake/resolve.js";
+import { IntakeAnswersSchema } from "./intake/types.js";
+import { corpusCachePath, insideCache } from "./generate/project.js";
 
 const fixtures = (path: string) => fileURLToPath(new URL(`../../../fixtures/${path}`, import.meta.url));
 const apiFetcher = createFixtureFetch(fixtures("http"));
@@ -61,3 +63,26 @@ describe("detectContext with the catalog", () => {
     expect(isMakeMcpError(err, "SOURCE_NOT_FOUND")).toBe(true);
   });
 });
+
+describe("inputs from outside", () => {
+  const base = { name: "x", title: "X", description: "d", target: "x", maintainers: ["me"] };
+
+  it("accepts only public https sources in catalog entries", () => {
+    expect(CatalogEntrySchema.safeParse({ ...base, answers: { codeSource: "../../.ssh" } }).success).toBe(false);
+    expect(CatalogEntrySchema.safeParse({ ...base, answers: { docsSource: "http://intranet/docs" } }).success).toBe(false);
+    expect(CatalogEntrySchema.safeParse({ ...base, answers: { docsSource: "https://example.com/llms.txt", codeSource: "none" } }).success).toBe(true);
+    expect(CatalogEntrySchema.safeParse({ ...base, target: "/etc/passwd" }).success).toBe(false);
+  });
+
+  it("rejects version answers that are not plain versions", () => {
+    expect(IntakeAnswersSchema.safeParse({ version: "../../tmp" }).success).toBe(false);
+    expect(IntakeAnswersSchema.safeParse({ version: "5.7.50" }).success).toBe(true);
+    expect(IntakeAnswersSchema.safeParse({ version: "latest" }).success).toBe(true);
+  });
+
+  it("keeps cache paths inside the cache", () => {
+    expect(() => corpusCachePath("daisyui", "../../../etc")).toThrow(/outside/);
+    expect(() => insideCache("/tmp/elsewhere")).toThrow(/outside/);
+  });
+});
+

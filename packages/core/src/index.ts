@@ -1,5 +1,6 @@
 export * from "./errors.js";
 export { VERSION } from "./version.js";
+export { isSafeVersion } from "./safe-version.js";
 export * from "./ir/index.js";
 export * from "./license.js";
 export { createSafeFetch, isBlockedAddress, USER_AGENT, type SafeFetchOptions } from "./fetch/safe-fetch.js";
@@ -21,6 +22,7 @@ export {
   refreshDocs,
   corpusCachePath,
   cacheRoot,
+  insideCache,
   hostPath,
   startExtraction,
   finishExtraction,

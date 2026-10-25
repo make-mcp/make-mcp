@@ -1,5 +1,6 @@
 import { parse as parseToml } from "smol-toml";
 import type { Workspace } from "../fs/workspace.js";
+import { isSafeVersion } from "../safe-version.js";
 
 export type PythonSource =
   | "uv.lock"
@@ -38,7 +39,13 @@ const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [
 
 /** Splits a PEP 508 requirement ("httpx[http2]>=0.27; python_version>'3.9'") into name and specifier. */
 export function parseRequirement(line: string): { name: string; spec: string } | undefined {
-  const cleaned = line.split("#")[0]!.split(";")[0]!.trim();
+  // pip-compile output: "pkg==1.0 \\" continuation lines and "--hash=…" options next to the requirement.
+  const cleaned = line
+    .split("#")[0]!
+    .split(";")[0]!
+    .replace(/\s+--\S.*$/, "")
+    .replace(/\\\s*$/, "")
+    .trim();
   if (!cleaned || cleaned.startsWith("-") || cleaned.includes("://")) return undefined;
   const match = /^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*(\(?[^)]*\)?)$/.exec(cleaned);
   if (!match) return undefined;
@@ -48,6 +55,8 @@ export function parseRequirement(line: string): { name: string; spec: string } |
 function poetrySpec(value: unknown): string {
   const raw = typeof value === "string" ? value : typeof asRecord(value).version === "string" ? (asRecord(value).version as string) : "";
   if (!raw || raw === "*") return "";
+  // A bare version means an exact pin in Poetry and Pipfile.
+  if (/^\d[\w.+!-]*$/.test(raw)) return `==${raw}`;
   // Poetry's caret/tilde ranges start at the given version.
   return /^[\^~]\d/.test(raw) ? `>=${raw.slice(1)}` : raw;
 }
@@ -164,16 +173,16 @@ export function findInstalledPythonPackage(ws: Workspace, name: string): Install
   ];
   for (const [source, read] of locks) {
     const version = read();
-    if (version) return { name, version, source, exact: true };
+    if (version && isSafeVersion(version)) return { name, version, source, exact: true };
   }
 
   const wanted = normalizePythonName(name);
   const declared = pythonDependencies(ws).filter((d) => normalizePythonName(d.name) === wanted);
-  const pinned = declared.find((d) => /^===?[0-9]/.test(d.spec) && !d.spec.includes(","));
+  const pinned = declared.find((d) => /^===?[0-9][0-9A-Za-z.+!]*$/.test(d.spec) && isSafeVersion(d.spec.replace(/^===?/, "")));
   if (pinned) return { name, version: pinned.spec.replace(/^===?/, ""), source: declaredSource(pinned.file), exact: true };
   for (const dep of declared) {
     const min = minimumPythonVersion(dep.spec);
-    if (min) return { name, version: min, source: declaredSource(dep.file), exact: false, range: dep.spec };
+    if (min && isSafeVersion(min)) return { name, version: min, source: declaredSource(dep.file), exact: false, range: dep.spec };
   }
   return undefined;
 }

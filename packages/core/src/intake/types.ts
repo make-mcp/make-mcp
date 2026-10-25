@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isSafeVersion } from "../safe-version.js";
 import type { OpenApiProbe } from "../discover/probe.js";
 import type { CatalogEntry } from "../catalog.js";
 import type { DocsSource } from "../parse/docs-corpus.js";
@@ -45,7 +46,7 @@ export interface Findings {
 export const IntakeAnswersSchema = z
   .object({
     mode: z.enum(["docs", "api", "both"]),
-    version: z.string().min(1),
+    version: z.string().refine((v) => v === "latest" || isSafeVersion(v), "not a plain version such as 5.7.50 or latest"),
     /** Repository URL, local path or "none". */
     codeSource: z.string().min(1),
     /** Docs/OpenAPI/llms.txt URL or "none". */

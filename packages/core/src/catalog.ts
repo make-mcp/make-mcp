@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MakeMcpError } from "./errors.js";
 import type { Fetcher } from "./fetch/types.js";
 import { IntakeAnswersSchema, type Findings, type IntakeAnswers } from "./intake/types.js";
 
@@ -10,28 +11,32 @@ import { IntakeAnswersSchema, type Findings, type IntakeAnswers } from "./intake
 
 export const CATALOG_URL = "https://raw.githubusercontent.com/make-mcp/catalog/main";
 
+const httpsUrl = z.string().max(500).regex(/^https:\/\/[^\s]+$/);
+
+/** Shared answers only – and only public https sources, never paths on the user's machine. */
 export const CatalogAnswersSchema = IntakeAnswersSchema.pick({
   mode: true,
-  docsSource: true,
-  codeSource: true,
   auth: true,
   scope: true,
   language: true,
   transport: true,
   tools: true,
+}).extend({
+  docsSource: z.union([httpsUrl, z.literal("extract"), z.literal("none")]).optional(),
+  codeSource: z.union([httpsUrl, z.literal("none")]).optional(),
 });
 
 export const CatalogEntrySchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
-  title: z.string().min(1),
+  title: z.string().min(1).max(80),
   description: z.string().min(1).max(300),
   /** What detection starts from: a package name or a docs/OpenAPI URL. */
-  target: z.string().min(1),
-  tags: z.array(z.string()).default([]),
+  target: z.union([httpsUrl, z.string().regex(/^@?[a-z0-9][a-z0-9._/-]{0,213}$/i)]),
+  tags: z.array(z.string().max(40)).max(12).default([]),
   /** GitHub handles of the people who keep the entry working. */
   maintainers: z.array(z.string()).min(1),
   answers: CatalogAnswersSchema.default({}),
-  notes: z.string().optional(),
+  notes: z.string().max(300).optional(),
 });
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 
@@ -40,7 +45,11 @@ export const CatalogIndexSchema = z.object({
 });
 export type CatalogIndex = z.infer<typeof CatalogIndexSchema>;
 
-const catalogBase = () => (process.env.MAKE_MCP_CATALOG_URL ?? CATALOG_URL).replace(/\/$/, "");
+const catalogBase = () => {
+  const base = (process.env.MAKE_MCP_CATALOG_URL ?? CATALOG_URL).replace(/\/$/, "");
+  if (!base.startsWith("https://")) throw new MakeMcpError("FETCH_BLOCKED", "MAKE_MCP_CATALOG_URL must be an https URL");
+  return base;
+};
 const catalogDisabled = () => process.env.MAKE_MCP_CATALOG === "off";
 
 /** `catalog:daisyui` → `daisyui`; anything else is not a catalog reference. */

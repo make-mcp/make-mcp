@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Eta } from "eta";
 import { strToU8, zipSync } from "fflate";
@@ -78,7 +78,15 @@ export function cacheRoot(): string {
 
 /** Cache location shared with the generated servers (keep in sync with the templates). */
 export function corpusCachePath(name: string, version: string): string {
-  return join(cacheRoot(), name, version, "corpus.json");
+  return insideCache(join(cacheRoot(), name, version, "corpus.json"));
+}
+
+/** Defence in depth: names and versions are validated upstream, but nothing may ever resolve outside the cache. */
+export function insideCache(path: string): string {
+  const root = resolve(cacheRoot());
+  const full = resolve(path);
+  if (!full.startsWith(root + sep)) throw new MakeMcpError("PATH_OUTSIDE_WORKSPACE", `Refusing cache path outside ${root}: ${full}`);
+  return full;
 }
 
 function envVarsFor(spec: ApiSpec | undefined, envPrefix: string): EnvVar[] {
