@@ -12,25 +12,34 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   diagnose:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Trusted publishing token exchange
         run: |
           id_token=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value)
+          echo "::add-mask::$id_token"
+          body=$(mktemp)
           for p in core mcp-server cli; do
-            code=$(curl -sS -o body.json -w '%{http_code}' -X POST -H "Authorization: Bearer $id_token" \
+            code=$(curl -sS -o "$body" -w '%{http_code}' -X POST -H "Authorization: Bearer $id_token" \
               "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@make-mcp%2f$p")
-            echo "@make-mcp/$p: HTTP $code $(jq -c 'del(.token)' body.json 2>/dev/null)"
+            # Only print fields that can never hold a credential.
+            echo "@make-mcp/$p: HTTP $code $(jq -c '{message, error, code}' "$body" 2>/dev/null)"
           done
+          rm -f "$body"
 
   publish:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
