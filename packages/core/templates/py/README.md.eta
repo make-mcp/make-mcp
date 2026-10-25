@@ -6,7 +6,8 @@ Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-```
+<% if (it.docs && it.docs.contentMode !== "embedded") { %>uv run server.py --refresh   # downloads the documentation on this machine (uses npx)
+<% } %>```
 
 <%~ include("/_partials/clients", it) %>
 

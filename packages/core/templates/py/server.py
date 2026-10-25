@@ -7,11 +7,16 @@ or customise this file freely: it has no dependency on the generator.
 from __future__ import annotations
 
 import base64
+import bisect
 import json
+import math
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
@@ -57,7 +62,7 @@ def load_pages() -> tuple[list[dict[str, Any]], str | None]:
     path = ROOT / "data" / "corpus.json" if docs["contentMode"] == "embedded" else corpus_cache_path()
     if not path.exists():
         return [], (
-            f"Documentation has not been downloaded yet. Run `npx @make-mcp/cli refresh {ROOT}` "
+            f"Documentation has not been downloaded yet. Run `uv run server.py --refresh` in {ROOT} "
             "(fetches it from the original source on this machine)."
         )
     return json.loads(path.read_text("utf-8"))["pages"], None
@@ -70,17 +75,65 @@ COMPONENTS = [p for p in PAGES if p["kind"] == "component"]
 TOKEN = re.compile(r"[a-z0-9]+")
 
 
+class SearchIndex:
+    """Dependency-free BM25 over title, section and body with prefix matching (mirrors the TS server's MiniSearch)."""
+
+    FIELDS = (("title", 4.0), ("section", 2.0), ("markdown", 1.0))
+    K1, B = 1.2, 0.75
+
+    def __init__(self, pages: list[dict[str, Any]]) -> None:
+        self.pages = pages
+        self.tf: list[dict[str, Counter[str]]] = []
+        self.lengths: dict[str, list[int]] = {field: [] for field, _ in self.FIELDS}
+        self.postings: dict[str, set[int]] = {}
+        for i, page in enumerate(pages):
+            counts = {field: Counter(TOKEN.findall(str(page.get(field) or "").lower())) for field, _ in self.FIELDS}
+            self.tf.append(counts)
+            for field, _ in self.FIELDS:
+                self.lengths[field].append(sum(counts[field].values()))
+                for term in counts[field]:
+                    self.postings.setdefault(term, set()).add(i)
+        self.average = {f: (sum(v) / len(v) if v else 0.0) or 1.0 for f, v in self.lengths.items()}
+        self.vocabulary = sorted(self.postings)
+
+    def _expand(self, term: str) -> list[tuple[str, float]]:
+        expanded = [(term, 1.0)] if term in self.postings else []
+        if len(term) >= 3:
+            start = bisect.bisect_left(self.vocabulary, term)
+            for candidate in self.vocabulary[start : start + 50]:
+                if not candidate.startswith(term):
+                    break
+                if candidate != term:
+                    expanded.append((candidate, 0.5))
+        return expanded
+
+    def search(self, query: str, limit: int, only: set[int] | None = None) -> list[dict[str, Any]]:
+        scores: dict[int, float] = {}
+        total = len(self.pages)
+        for term in TOKEN.findall(query.lower()):
+            for candidate, weight in self._expand(term):
+                docs = self.postings[candidate]
+                idf = math.log(1 + (total - len(docs) + 0.5) / (len(docs) + 0.5))
+                for i in docs:
+                    if only is not None and i not in only:
+                        continue
+                    score = 0.0
+                    for field, boost in self.FIELDS:
+                        tf = self.tf[i][field][candidate]
+                        if tf:
+                            norm = 1 - self.B + self.B * self.lengths[field][i] / self.average[field]
+                            score += boost * tf * (self.K1 + 1) / (tf + self.K1 * norm)
+                    scores[i] = scores.get(i, 0.0) + weight * idf * score
+        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        return [self.pages[i] for i, _ in ranked[:limit]]
+
+
+INDEX = SearchIndex(PAGES)
+COMPONENT_IDS = {i for i, p in enumerate(PAGES) if p["kind"] == "component"}
+
+
 def search_pages(query: str, limit: int, only_components: bool = False) -> list[dict[str, Any]]:
-    """Small dependency-free ranking: title hits weigh most, then section, then body frequency."""
-    terms = TOKEN.findall(query.lower())
-    scored: list[tuple[float, dict[str, Any]]] = []
-    for page in COMPONENTS if only_components else PAGES:
-        title, section, body = page["title"].lower(), (page.get("section") or "").lower(), page["markdown"].lower()
-        score = sum(8 * (t in title) + 3 * (t in section) + min(body.count(t), 10) for t in terms)
-        if score > 0:
-            scored.append((score, page))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [page for _, page in scored[:limit]]
+    return INDEX.search(query, limit, COMPONENT_IDS if only_components else None)
 
 
 def find_page(path: str) -> dict[str, Any] | None:
@@ -544,40 +597,79 @@ async def run_stdio() -> None:
         await server.run(read, write, server.create_initialization_options())
 
 
-def run_http() -> None:
+def run_http(legacy_sse: bool) -> None:
     import contextlib
 
     import uvicorn
+    from mcp.server.sse import SseServerTransport
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
     from starlette.applications import Starlette
-    from starlette.responses import PlainTextResponse
+    from starlette.responses import PlainTextResponse, Response
     from starlette.routing import Mount, Route
 
     manager = StreamableHTTPSessionManager(app=create_server(), stateless=True)
     token = os.environ.get("MCP_AUTH_TOKEN")
 
-    async def mcp_app(scope: Any, receive: Any, send: Any) -> None:
-        if token:
-            auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode()
-            if auth != f"Bearer {token}":
+    def authorized(scope: Any) -> bool:
+        auth = dict(scope.get("headers") or []).get(b"authorization", b"").decode()
+        return not token or auth == f"Bearer {token}"
+
+    class Guarded:
+        """ASGI app that checks MCP_AUTH_TOKEN (a class, so Starlette routes it as a raw ASGI app)."""
+
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            if not authorized(scope):
                 await PlainTextResponse("unauthorized", status_code=401)(scope, receive, send)
                 return
-        await manager.handle_request(scope, receive, send)
+            await self.app(scope, receive, send)
+
+    routes: list[Any] = [Route("/healthz", lambda _r: PlainTextResponse("ok")), Mount("/mcp", app=Guarded(manager.handle_request))]
+    if legacy_sse:
+        sse = SseServerTransport("/messages/")
+
+        async def handle_sse(scope: Any, receive: Any, send: Any) -> None:
+            server = create_server()
+            async with sse.connect_sse(scope, receive, send) as (read, write):
+                await server.run(read, write, server.create_initialization_options())
+            await Response()(scope, receive, send)
+
+        routes += [Route("/sse", Guarded(handle_sse), methods=["GET"]), Mount("/messages/", app=Guarded(sse.handle_post_message))]
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: Starlette):  # type: ignore[no-untyped-def]
         async with manager.run():
             yield
 
-    app = Starlette(
-        routes=[Route("/healthz", lambda _r: PlainTextResponse("ok")), Mount("/mcp", app=mcp_app)],
-        lifespan=lifespan,
-    )
-    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", "3000")), log_level="warning")
+    host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "3000"))
+    log(f"listening on http://{host}:{port}/mcp" + (" (legacy SSE on /sse)" if legacy_sse else ""))
+    uvicorn.run(Starlette(routes=routes, lifespan=lifespan), host=host, port=port, log_level="warning")
+
+
+def refresh() -> int:
+    """Downloads documentation for servers that must not embed it (see README) into the local cache."""
+    docs = MANIFEST.get("docs")
+    if not docs or docs["contentMode"] == "embedded":
+        print("Nothing to refresh: the documentation is embedded in this server.", file=sys.stderr)
+        return 0
+    npx = shutil.which("npx")
+    if not npx:
+        print(
+            "Downloading the documentation uses the make-mcp CLI and needs Node.js ≥ 22 (npx). "
+            f"Install Node.js, then run: npx -y {MANIFEST['generator']} refresh {ROOT}",
+            file=sys.stderr,
+        )
+        return 1
+    return subprocess.call([npx, "-y", MANIFEST["generator"], "refresh", str(ROOT)])
 
 
 if __name__ == "__main__":
-    if (os.environ.get("MCP_TRANSPORT") or MANIFEST["transport"]) == "http":
-        run_http()
+    if "--refresh" in sys.argv[1:]:
+        sys.exit(refresh())
+    transport = os.environ.get("MCP_TRANSPORT") or MANIFEST["transport"]
+    if transport in ("http", "sse"):
+        run_http(legacy_sse=transport == "sse")
     else:
         anyio.run(run_stdio)
