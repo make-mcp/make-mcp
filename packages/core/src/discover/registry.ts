@@ -32,6 +32,8 @@ export async function npmMetadata(name: string, version: string | undefined, fet
   const latestRes = await fetcher(`${base}/latest`, { accept: "application/json" });
   if (!latestRes.ok) return undefined;
   const latest = JSON.parse(latestRes.body) as NpmManifest;
+  // npm parks squatted names of other ecosystems' packages (e.g. "pydantic") as empty "-security" placeholders.
+  if (/-security$/.test(latest.version)) return undefined;
 
   let manifest = latest;
   if (version && version !== latest.version && /^\d/.test(version)) {

@@ -21,6 +21,8 @@ export interface DetectOptions {
   apiFetcher: Fetcher;
   /** Polite fetcher (robots/TDM) for documentation sites. */
   contentFetcher: Fetcher;
+  /** Look the name up on PyPI before npm (e.g. a catalog entry for a Python package). */
+  preferPython?: boolean;
 }
 
 const isUrl = (value: string) => /^https?:\/\//i.test(value);
@@ -75,7 +77,7 @@ export async function detectContext(options: DetectOptions): Promise<Findings> {
   if (!entry && catalogName(options.target)) {
     throw new MakeMcpError("SOURCE_NOT_FOUND", `No catalog entry "${catalogName(options.target)}" – see https://github.com/make-mcp/catalog`);
   }
-  const findings = await detectTarget(entry ? { ...options, target: entry.target } : options);
+  const findings = await detectTarget(entry ? { ...options, target: entry.target, preferPython: options.preferPython ?? entry.answers.language === "py" } : options);
   if (!entry) return findings;
 
   let next: Findings = { ...findings, target: entry.title, catalog: entry, notes: [...findings.notes] };
@@ -117,7 +119,7 @@ async function detectTarget(options: DetectOptions): Promise<Findings> {
   const npmDep = matchDependency(ws, options.target);
   const pyDep = npmDep ? undefined : matchPythonDependency(ws, options.target);
   const packageName = npmDep ?? pyDep ?? options.target.toLowerCase().replace(/\s+/g, "-");
-  const preferPython = pyDep !== undefined || (npmDep === undefined && language === "py");
+  const preferPython = pyDep !== undefined || (npmDep === undefined && (options.preferPython ?? language === "py"));
   const installed = preferPython ? findInstalledPythonPackage(ws, packageName) : findInstalledPackage(ws, packageName);
   const meta = await packageMetadata(packageName, installed?.exact ? installed.version : undefined, preferPython, options.apiFetcher);
 

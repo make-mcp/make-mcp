@@ -7,6 +7,7 @@ import { createFixtureFetch } from "../fetch/fixture-fetch.js";
 import { createPoliteFetch } from "../fetch/polite-fetch.js";
 import { createWorkspace } from "../fs/workspace.js";
 import { detectContext } from "./detect.js";
+import { npmMetadata } from "./registry.js";
 import {
   findInstalledPythonPackage,
   matchPythonDependency,
@@ -113,6 +114,20 @@ describe("untrusted project files", () => {
     expect(findInstalledPythonPackage(py, "other")).toBeUndefined();
     const npm = project({ "package.json": '{"dependencies":{"x":"1.0.0"}}', "package-lock.json": '{"packages":{"node_modules/x":{"version":"../../x"}}}' });
     expect(findInstalledPackage(npm, "x")).toMatchObject({ exact: false });
+  });
+});
+
+describe("npm placeholders for Python names", () => {
+  it("ignores npm security holding packages", async () => {
+    const fetcher = async (url: string) => ({
+      ok: true,
+      status: 200,
+      url,
+      contentType: "application/json",
+      headers: {},
+      body: JSON.stringify({ name: "pydantic", version: "0.0.1-security", description: "security holding package" }),
+    });
+    expect(await npmMetadata("pydantic", undefined, fetcher)).toBeUndefined();
   });
 });
 
