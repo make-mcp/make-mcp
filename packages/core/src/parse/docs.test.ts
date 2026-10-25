@@ -123,3 +123,17 @@ describe("repo helpers", () => {
     expect(isRepoDocFile(path)).toBe(expected);
   });
 });
+
+describe("large llms-full.txt", () => {
+  it("keeps every section of one downloaded file instead of capping it like a crawl", async () => {
+    const body = Array.from({ length: 450 }, (_, i) => `## Section ${i}\n\nText of section ${i}.`).join("\n\n");
+    const fetcher: Fetcher = async (url) => ({ ok: true, status: 200, url, contentType: "text/plain", body, headers: {} });
+    const corpus = await loadDocCorpus([{ kind: "llms-full-txt", url: "https://big.example.com/llms-full.txt" }], {
+      contentFetcher: fetcher,
+      apiFetcher: fetcher,
+      title: "Big",
+    });
+    expect(corpus.pages.length).toBe(450);
+  });
+});
+
