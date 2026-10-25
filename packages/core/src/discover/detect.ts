@@ -1,7 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import semver from "semver";
+import { catalogName, findCatalogEntry } from "../catalog.js";
 import type { Fetcher } from "../fetch/types.js";
+import { MakeMcpError } from "../errors.js";
 import { createWorkspace } from "../fs/workspace.js";
 import type { Findings, IntakeAnswers, Mode, TargetKind } from "../intake/types.js";
 import type { DocsSource } from "../parse/docs-corpus.js";
@@ -64,7 +66,26 @@ async function packageMetadata(name: string, version: string | undefined, prefer
   return undefined;
 }
 
+/**
+ * Detects the target and, if the community catalog has an entry for it, applies the entry's sources and mode.
+ * `catalog:<name>` forces a catalog entry; plain names are looked up as well.
+ */
 export async function detectContext(options: DetectOptions): Promise<Findings> {
+  const entry = await findCatalogEntry(options.target, options.apiFetcher);
+  if (!entry && catalogName(options.target)) {
+    throw new MakeMcpError("SOURCE_NOT_FOUND", `No catalog entry "${catalogName(options.target)}" – see https://github.com/make-mcp/catalog`);
+  }
+  const findings = await detectTarget(entry ? { ...options, target: entry.target } : options);
+  if (!entry) return findings;
+
+  let next: Findings = { ...findings, target: entry.title, catalog: entry, notes: [...findings.notes] };
+  if (entry.answers.docsSource || entry.answers.codeSource) next = await applySourceAnswers(next, entry.answers, options);
+  if (entry.answers.mode) next = { ...next, mode: { value: entry.answers.mode, confidence: "high", source: "community catalog" } };
+  if (entry.notes) next.notes.push(entry.notes);
+  return next;
+}
+
+async function detectTarget(options: DetectOptions): Promise<Findings> {
   const ws = createWorkspace(options.workspaceRoot);
   const notes: string[] = [];
   const language = detectWorkspaceLanguage(ws);

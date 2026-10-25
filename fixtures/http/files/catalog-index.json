@@ -1,0 +1,6 @@
+{
+  "entries": [
+    { "name": "notes", "title": "Acme Notes", "description": "Notes API, extracted from its prose documentation", "target": "https://notes.example.com/", "tags": ["api", "example"] },
+    { "name": "daisyui", "title": "daisyUI", "description": "Tailwind CSS component library – components and class names", "target": "daisyui", "tags": ["ui", "css"] }
+  ]
+}

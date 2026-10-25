@@ -1,0 +1,10 @@
+{
+  "name": "notes",
+  "title": "Acme Notes",
+  "description": "Notes API, extracted from its prose documentation",
+  "target": "https://notes.example.com/",
+  "tags": ["api", "example"],
+  "maintainers": ["make-mcp"],
+  "answers": { "mode": "api", "docsSource": "extract", "auth": "none", "language": "ts" },
+  "notes": "The base URL is stated in the docs; set NOTES_API_KEY."
+}

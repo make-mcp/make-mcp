@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import {
   applyRegistration,
   applySourceAnswers,
+  catalogAnswers,
   detectContext,
   EXTRACTION_INSTRUCTIONS,
   ExtractionResultSchema,
@@ -58,6 +59,7 @@ export interface FindingsView {
   repository: string | undefined;
   repoTag: string | undefined;
   docsSources: string[];
+  catalog: string | undefined;
   openapi: Findings["openapi"];
   mode: Findings["mode"];
   language: Findings["language"];
@@ -74,6 +76,7 @@ export function findingsView(f: Findings): FindingsView {
     repository: f.repositoryUrl?.value,
     repoTag: f.repoTag,
     docsSources: f.docsCandidates.map((d) => `${d.kind}: ${d.url}${d.ref ? ` @ ${d.ref}` : ""}`),
+    catalog: f.catalog ? `${f.catalog.name} (community catalog, maintained by ${f.catalog.maintainers.join(", ")})` : undefined,
     openapi: f.openapi,
     mode: f.mode,
     language: f.language,
@@ -142,7 +145,7 @@ export class IntakeSessions {
 
   async detect(target: string, workspace?: string): Promise<DetectResult> {
     const findings = await detectContext({ target, workspaceRoot: workspace ?? this.defaultWorkspace ?? process.cwd(), ...this.fetchers });
-    const s: Session = { id: randomUUID(), findings, answers: {} };
+    const s: Session = { id: randomUUID(), findings, answers: catalogAnswers(findings, {}) };
     this.sessions.set(s.id, s);
     return { sessionId: s.id, findings: findingsView(findings), questions: nextQuestions(findings, s.answers) };
   }

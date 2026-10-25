@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { OpenApiProbe } from "../discover/probe.js";
+import type { CatalogEntry } from "../catalog.js";
 import type { DocsSource } from "../parse/docs-corpus.js";
 
 export type Confidence = "high" | "medium" | "low";
@@ -37,6 +38,8 @@ export interface Findings {
   language?: Finding<"ts" | "py">;
   /** Things the user should know, e.g. a version mismatch between docs and installed package. */
   notes: string[];
+  /** Community catalog entry whose answers pre-fill the intake. */
+  catalog?: CatalogEntry;
 }
 
 export const IntakeAnswersSchema = z

@@ -181,6 +181,7 @@ function renderFindings(f) {
     ["version", f.version && `${f.version.value} (${f.version.source})`],
     ["license", f.license],
     ["repository", f.repository && `${f.repository}${f.repoTag ? ` @ ${f.repoTag}` : ""}`],
+    ["catalog", f.catalog],
     ["docs", f.docsSources.join("\n")],
     ["openapi", f.openapi && `${f.openapi.url} (${f.openapi.endpointCount} operations)`],
     ["notes", f.notes.join("\n")],

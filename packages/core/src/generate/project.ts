@@ -70,10 +70,14 @@ export interface GeneratedProject {
   warnings: string[];
 }
 
+/** Root of make-mcp's user cache (docs downloads, servers built by `make-mcp run`). */
+export function cacheRoot(): string {
+  return process.env.MAKE_MCP_CACHE_DIR ?? join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "make-mcp");
+}
+
 /** Cache location shared with the generated servers (keep in sync with the templates). */
 export function corpusCachePath(name: string, version: string): string {
-  const base = process.env.MAKE_MCP_CACHE_DIR ?? join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "make-mcp");
-  return join(base, name, version, "corpus.json");
+  return join(cacheRoot(), name, version, "corpus.json");
 }
 
 function envVarsFor(spec: ApiSpec | undefined, envPrefix: string): EnvVar[] {

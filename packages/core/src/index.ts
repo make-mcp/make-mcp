@@ -19,6 +19,7 @@ export {
   zipProject,
   refreshDocs,
   corpusCachePath,
+  cacheRoot,
   hostPath,
   startExtraction,
   finishExtraction,
@@ -51,4 +52,17 @@ export {
 } from "./extract/prose-api.js";
 export { createLlmFromEnv, anthropicClient, openAiCompatibleClient, runExtraction, DEFAULT_ANTHROPIC_MODEL, type LlmClient } from "./extract/llm.js";
 export { planRegistration, applyRegistration, type AgentClient, type RegisterInput, type RegistrationPlan } from "./generate/register.js";
+export {
+  CATALOG_URL,
+  CatalogEntrySchema,
+  CatalogIndexSchema,
+  catalogAnswers,
+  catalogName,
+  fetchCatalogEntry,
+  fetchCatalogIndex,
+  findCatalogEntry,
+  searchCatalog,
+  type CatalogEntry,
+  type CatalogIndex,
+} from "./catalog.js";
 export { createFetchers, type Fetchers, type FetcherConfig } from "./fetch/defaults.js";

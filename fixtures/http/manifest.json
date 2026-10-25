@@ -8,5 +8,7 @@
   "https://pypi.org/pypi/fastapi/json": { "file": "files/pypi-fastapi-latest.json", "contentType": "application/json" },
   "https://pypi.org/pypi/fastapi/0.115.6/json": { "file": "files/pypi-fastapi-0.115.6.json", "contentType": "application/json" },
   "https://notes.example.com/": { "file": "files/notes-home.html", "contentType": "text/html; charset=utf-8" },
-  "https://notes.example.com/llms-full.txt": { "file": "files/notes-llms-full.txt", "contentType": "text/plain; charset=utf-8" }
+  "https://notes.example.com/llms-full.txt": { "file": "files/notes-llms-full.txt", "contentType": "text/plain; charset=utf-8" },
+  "https://raw.githubusercontent.com/make-mcp/catalog/main/index.json": { "file": "files/catalog-index.json", "contentType": "application/json" },
+  "https://raw.githubusercontent.com/make-mcp/catalog/main/entries/notes.json": { "file": "files/catalog-notes.json", "contentType": "application/json" }
 }

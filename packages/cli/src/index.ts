@@ -5,8 +5,11 @@ import { parseArgs } from "node:util";
 import {
   applyRegistration,
   applySourceAnswers,
+  catalogAnswers,
   createFetchers,
   createLlmFromEnv,
+  fetchCatalogIndex,
+  searchCatalog,
   detectContext,
   finishExtraction,
   generateProject,
@@ -30,6 +33,7 @@ import {
   type ResolvedIntake,
 } from "@make-mcp/core";
 import { SERVER_VERSION, startStdioServer, testServer } from "@make-mcp/mcp-server";
+import { prepareServer, runServer } from "./run.js";
 import { startUi } from "./ui.js";
 
 const HELP = `make-mcp ${SERVER_VERSION} – generate MCP servers from docs, specs or source code
@@ -41,6 +45,9 @@ Usage:
   make-mcp generate --target <t>    Non-interactive (use --yes to accept defaults)
   make-mcp mcp                      Run make-mcp as an MCP server (stdio) for coding agents
   make-mcp ui                       Local web UI (127.0.0.1:4321; --port, --host, --workspace)
+  make-mcp run <target>             Build (once, cached) and run a server for the project's version over stdio
+                                    (--prepare: only build, --refresh: rebuild)
+  make-mcp catalog [query]          Search the community catalog (github.com/make-mcp/catalog)
   make-mcp refresh <dir>            Download docs for a server that fetches them on install
   make-mcp test <dir>               Install, build and smoke-test a generated server
 
@@ -86,6 +93,8 @@ const { positionals, values } = parseArgs({
     "if-missing": { type: "boolean", default: false },
     fixtures: { type: "string" },
     port: { type: "string" },
+    refresh: { type: "boolean", default: false },
+    prepare: { type: "boolean", default: false },
     host: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
@@ -136,7 +145,8 @@ async function intake(fetchers: Fetchers, interactive: boolean): Promise<Resolve
   const workspaceRoot = resolve(values.workspace ?? process.cwd());
   out(`Detecting ${target} …`);
   let findings = await detectContext({ target, workspaceRoot, ...fetchers });
-  let answers: IntakeAnswers = normalizeAnswers(findings, {}, answersFromFlags());
+  if (findings.catalog) out(`  catalog: ${findings.catalog.name} – ${findings.catalog.description}`);
+  let answers: IntakeAnswers = normalizeAnswers(findings, catalogAnswers(findings, {}), answersFromFlags());
   if (answers.docsSource || answers.codeSource) findings = await applySourceAnswers(findings, answers, fetchers);
   findings.notes.forEach((n) => out(`  note: ${n}`));
 
@@ -238,6 +248,28 @@ async function main(): Promise<void> {
       return generate(false);
     case "mcp":
       return startStdioServer();
+    case "run": {
+      const target = values.target ?? positionals[1];
+      if (!target) throw new Error("Missing target, e.g. `make-mcp run catalog:daisyui`.");
+      const runOptions = {
+        target,
+        workspace: resolve(values.workspace ?? process.cwd()),
+        fetchers: createFetchers({ allowPrivateNetworks: values["allow-private"], ...(values.fixtures ? { fixturesDir: values.fixtures } : {}) }),
+        refresh: values.refresh,
+      };
+      // --prepare builds the cache entry only, e.g. before an MCP client with a short start timeout launches it.
+      if (values.prepare) return void (await prepareServer(runOptions));
+      process.exitCode = await runServer(runOptions);
+      return;
+    }
+    case "catalog": {
+      const index = await fetchCatalogIndex(createFetchers().apiFetcher);
+      if (!index) throw new Error("The community catalog is not reachable (or MAKE_MCP_CATALOG=off).");
+      const entries = searchCatalog(index, positionals.slice(1).join(" "));
+      entries.forEach((e) => out(`${e.name.padEnd(24)} ${e.description}`));
+      if (entries.length === 0) out("No entries match. Add one: https://github.com/make-mcp/catalog");
+      return;
+    }
     case "ui": {
       const ui = await startUi({
         fetchers: createFetchers({ allowPrivateNetworks: values["allow-private"], ...(values.fixtures ? { fixturesDir: values.fixtures } : {}) }),
