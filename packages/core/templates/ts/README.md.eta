@@ -12,5 +12,5 @@ npm run build
 ## Regenerate
 
 ```bash
-npx make-mcp create <%= it.target %>
+npx @make-mcp/cli create <%= it.target %>
 ```

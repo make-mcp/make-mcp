@@ -1,14 +1,27 @@
 {
-  "name": "make-mcp",
+  "name": "@make-mcp/cli",
   "version": "0.1.0",
   "description": "Generate MCP servers from API specs, documentation or source code",
   "license": "Apache-2.0",
   "type": "module",
-  "bin": { "make-mcp": "./dist/index.js" },
-  "files": ["dist"],
+  "bin": {
+    "make-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@make-mcp/core": "0.1.0",
     "@make-mcp/mcp-server": "0.1.0",
     "@inquirer/prompts": "8.7.4"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/make-mcp/make-mcp.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/make-mcp/make-mcp#readme"
 }

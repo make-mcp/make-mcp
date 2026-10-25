@@ -27,6 +27,8 @@ import { SERVER_VERSION, startStdioServer, testServer } from "@make-mcp/mcp-serv
 
 const HELP = `make-mcp ${SERVER_VERSION} – generate MCP servers from docs, specs or source code
 
+Run with "npx @make-mcp/cli <command>" or install globally: "npm i -g @make-mcp/cli".
+
 Usage:
   make-mcp create [target]          Interactive: detect, ask, generate, test, register
   make-mcp generate --target <t>    Non-interactive (use --yes to accept defaults)

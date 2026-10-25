@@ -61,7 +61,7 @@ Regeln: Felder mit hoher Erkennungssicherheit werden nur in der Abschlusszusamme
 | **Claude-Code-Plugin** | Skill `make-mcp` (Intake-Ablauf, Fragen via AskUserQuestion) + Command `/make-mcp:create` + gebündelter MCP-Server (`.mcp.json`) | M1 |
 | **Generischer MCP-Server** (Cursor, Codex, Windsurf, Claude Desktop …) | Gleiche Tools; Intake-Anleitung als MCP-Prompt `create_mcp` + Tool-Beschreibungen; Agent fragt konversationell | M1 |
 | Agent-Regeln | `AGENTS.md`-Snippet, Cursor-Rule – verweisen auf MCP-Prompt | M1 |
-| CLI `npx make-mcp create` | Gleicher Intake interaktiv im Terminal (`@inquirer/prompts`), `--yes` + Flags für CI | M1 |
+| CLI `npx @make-mcp/cli create` | Gleicher Intake interaktiv im Terminal (`@inquirer/prompts`), `--yes` + Flags für CI | M1 |
 | Lokale Web-UI + Docker | Formular auf Basis desselben Intake-Schemas | M3 |
 | Cloud-Run-Deploy-Vorlagen (Skaffold/Cloud Code für Dev) | Für generierte HTTP-Server und die UI | M4 |
 | Community-Katalog | Nur Intake-Antworten/Configs, keine kopierten Inhalte; Rebuild per GitHub Action | M5 |

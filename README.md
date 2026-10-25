@@ -41,15 +41,15 @@ Cloud Run & co., and contain no dependency on this generator.
 
 ### Cursor, Codex, Windsurf, Claude Desktop, …
 
-Add the MCP server (`npx -y make-mcp mcp`) and optionally the agent guidance from
+Add the MCP server (`npx -y @make-mcp/cli mcp`) and optionally the agent guidance from
 [`plugins/agents-md`](plugins/agents-md/README.md). Clients with prompt support can start with `create_mcp`.
 
 ### CLI
 
 ```bash
-npx make-mcp create daisyui                       # interactive
-npx make-mcp generate --target https://api.example.com/openapi.json --lang py --yes
-npx make-mcp test ./mcp-servers/daisyui-mcp
+npx @make-mcp/cli create daisyui                       # interactive
+npx @make-mcp/cli generate --target https://api.example.com/openapi.json --lang py --yes
+npx @make-mcp/cli test ./mcp-servers/daisyui-mcp
 ```
 
 ## What it asks

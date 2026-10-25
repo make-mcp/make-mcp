@@ -3,7 +3,7 @@
 1. Add the MCP server to your agent, e.g. Cursor `.cursor/mcp.json`:
 
    ```json
-   { "mcpServers": { "make-mcp": { "command": "npx", "args": ["-y", "make-mcp", "mcp"] } } }
+   { "mcpServers": { "make-mcp": { "command": "npx", "args": ["-y", "@make-mcp/cli", "mcp"] } } }
    ```
 
    Codex (`~/.codex/config.toml`):
@@ -11,7 +11,7 @@
    ```toml
    [mcp_servers.make-mcp]
    command = "npx"
-   args = ["-y", "make-mcp", "mcp"]
+   args = ["-y", "@make-mcp/cli", "mcp"]
    ```
 
 2. Optional guidance for the agent:

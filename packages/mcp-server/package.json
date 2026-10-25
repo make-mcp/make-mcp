@@ -11,11 +11,22 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@make-mcp/core": "0.1.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "pino": "10.4.0",
     "zod": "4.6.7"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/make-mcp/make-mcp.git",
+    "directory": "packages/mcp-server"
+  },
+  "homepage": "https://github.com/make-mcp/make-mcp#readme"
 }

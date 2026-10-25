@@ -1,7 +1,7 @@
 ## Generating MCP servers (make-mcp)
 
 When the user asks for an MCP server for a library, product or API, use the `make-mcp` MCP server
-(`npx -y make-mcp mcp`). Its `create_mcp` prompt and tool descriptions contain the full workflow:
+(`npx -y @make-mcp/cli mcp`). Its `create_mcp` prompt and tool descriptions contain the full workflow:
 
 1. `detect_context` with the target and `workspace` = absolute project path → report what was found, including `notes`.
 2. Ask the returned `questions` (show options, pre-select `default`, allow free text when `allowFreeText`).

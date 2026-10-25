@@ -57,7 +57,7 @@ def load_pages() -> tuple[list[dict[str, Any]], str | None]:
     path = ROOT / "data" / "corpus.json" if docs["contentMode"] == "embedded" else corpus_cache_path()
     if not path.exists():
         return [], (
-            f"Documentation has not been downloaded yet. Run `npx make-mcp refresh {ROOT}` "
+            f"Documentation has not been downloaded yet. Run `npx @make-mcp/cli refresh {ROOT}` "
             "(fetches it from the original source on this machine)."
         )
     return json.loads(path.read_text("utf-8"))["pages"], None
