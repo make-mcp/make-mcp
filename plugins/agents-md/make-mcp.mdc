@@ -5,5 +5,6 @@ alwaysApply: false
 
 Use the `make-mcp` MCP server for this. Follow its `create_mcp` prompt:
 detect_context → ask the returned questions (pre-select defaults, never answer for the user) → submit_answers →
-preview_plan and wait for an explicit yes → generate_server → test_server → register_server (show diff, apply only
+preview_plan and wait for an explicit yes → (only if asked: extract_api → extract the operations yourself as JSON,
+verbatim quotes, nothing invented → submit_extraction, for every task) → generate_server → test_server → register_server (show diff, apply only
 after agreement). Never ask for secret values in chat.

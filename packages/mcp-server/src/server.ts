@@ -5,6 +5,12 @@ import {
   applySourceAnswers,
   createFetchers,
   detectContext,
+  EXTRACTION_INSTRUCTIONS,
+  ExtractionResultSchema,
+  extractionJsonSchema,
+  finishExtraction,
+  parseModelJson,
+  startExtraction,
   MakeMcpError,
   generateProject,
   isMakeMcpError,
@@ -15,6 +21,10 @@ import {
   summarizeIntake,
   writeProject,
   zipProject,
+  type ApiSpec,
+  type DocCorpus,
+  type ExtractionPlan,
+  type ExtractionResult,
   type Fetchers,
   type Findings,
   type GeneratedProject,
@@ -36,6 +46,7 @@ interface Session {
   answers: IntakeAnswers;
   resolved?: ResolvedIntake;
   project?: GeneratedProject;
+  extraction?: { corpus: DocCorpus; plan: ExtractionPlan; results: Map<string, ExtractionResult>; spec?: ApiSpec };
 }
 
 const FLOW = `Workflow (follow it in order, talk to the user in their language):
@@ -44,6 +55,9 @@ const FLOW = `Workflow (follow it in order, talk to the user in their language):
    pre-select the "default" option, allow free text where allowFreeText is true. Never invent answers.
 3. submit_answers with the user's choices (option value or label). Repeat 2–3 until no questions remain.
 4. preview_plan and show the summary verbatim. Wait for an explicit "yes" before continuing.
+4b. Only if preview_plan says the API must be extracted from the documentation: call extract_api, read the returned
+   pages yourself and answer with JSON exactly as its instructions and schema say (quote the page verbatim, never
+   invent operations), then submit_extraction. Repeat for every task. Show the user the accepted operations.
 5. generate_server, then test_server. Report the tools and any warnings.
 6. register_server without apply first, show the user the diff; only call it with apply=true after they agree.`;
 
@@ -155,7 +169,103 @@ export function createMakeMcpServer(options: ServerOptions = {}): McpServer {
       try {
         const s = session(sessionId);
         s.resolved = resolveIntake(s.findings, s.answers);
-        return { content: [{ type: "text", text: `${summarizeIntake(s.resolved)}\n\nAsk the user to confirm before calling generate_server.` }] };
+        const next =
+          s.resolved.apiSource === "docs"
+            ? "Ask the user to confirm. Then extract the API: extract_api → submit_extraction for every task → generate_server."
+            : "Ask the user to confirm before calling generate_server.";
+        return { content: [{ type: "text", text: `${summarizeIntake(s.resolved)}\n\n${next}` }] };
+      } catch (err) {
+        return failure(err);
+      }
+    },
+  );
+
+  const extractionSummary = (s: Session, resolved: ResolvedIntake) => {
+    const extraction = s.extraction!;
+    const { spec, validated } = finishExtraction(resolved, extraction.corpus, [...extraction.results.values()]);
+    extraction.spec = spec;
+    const remaining = extraction.plan.tasks.filter((t) => !extraction.results.has(t.id)).map((t) => t.id);
+    return {
+      accepted: spec.endpoints.map((e) => `${e.method.toUpperCase()} ${e.path} – ${e.summary ?? e.id}`),
+      rejected: validated.rejected,
+      baseUrl: spec.baseUrl || "(not stated in the docs – the user must set it)",
+      auth: spec.auth.map((a) => a.type),
+      notes: validated.notes,
+      remainingTasks: remaining,
+      next: remaining.length ? `Call extract_api for task ${remaining[0]}.` : "Show the accepted operations to the user, then call generate_server.",
+    };
+  };
+
+  server.registerTool(
+    "extract_api",
+    {
+      title: "Extract API from docs",
+      description:
+        "Step 4b (only when preview_plan asks for it). Returns one batch of documentation pages plus instructions and a JSON schema. Read the pages, extract the HTTP operations yourself and pass the JSON to submit_extraction.",
+      inputSchema: { sessionId: z.string(), taskId: z.string().optional().describe("Defaults to the next unfinished task") },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ sessionId, taskId }) => {
+      try {
+        const s = session(sessionId);
+        const resolved = (s.resolved ??= resolveIntake(s.findings, s.answers));
+        if (resolved.apiSource !== "docs") throw new MakeMcpError("INTAKE_INCOMPLETE", "This target has an OpenAPI spec; no extraction needed.");
+        if (!s.extraction) {
+          const { corpus, plan } = await startExtraction(resolved, fetchers);
+          s.extraction = { corpus, plan, results: new Map() };
+          log.info({ session: s.id, tasks: plan.tasks.length, pages: corpus.pages.length }, "extraction planned");
+        }
+        const { plan, results } = s.extraction;
+        const task = taskId ? plan.tasks.find((t) => t.id === taskId) : plan.tasks.find((t) => !results.has(t.id));
+        if (!task) {
+          if (taskId) throw new MakeMcpError("INTAKE_INCOMPLETE", `Unknown taskId ${taskId}`);
+          return json({ done: true, ...extractionSummary(s, resolved) });
+        }
+        return json({
+          taskId: task.id,
+          task: `${plan.tasks.indexOf(task) + 1} of ${plan.tasks.length}`,
+          ...(plan.skippedPages ? { skippedPages: plan.skippedPages } : {}),
+          instructions: EXTRACTION_INSTRUCTIONS,
+          schema: extractionJsonSchema(),
+          pages: task.pages,
+        });
+      } catch (err) {
+        return failure(err);
+      }
+    },
+  );
+
+  server.registerTool(
+    "submit_extraction",
+    {
+      title: "Submit extracted API",
+      description:
+        "Step 4b. Stores your JSON for one extract_api task. Every operation is checked against the quoted page; invented ones are rejected. Returns the accepted operations and what is left.",
+      inputSchema: {
+        sessionId: z.string(),
+        taskId: z.string(),
+        result: z.union([z.string(), z.record(z.string(), z.unknown())]).describe("JSON object (or string) matching the schema from extract_api"),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ sessionId, taskId, result }) => {
+      try {
+        const s = session(sessionId);
+        if (!s.extraction || !s.resolved) throw new MakeMcpError("INTAKE_INCOMPLETE", "Call extract_api first.");
+        if (!s.extraction.plan.tasks.some((t) => t.id === taskId)) throw new MakeMcpError("INTAKE_INCOMPLETE", `Unknown taskId ${taskId}`);
+        const parsed = ExtractionResultSchema.safeParse(typeof result === "string" ? parseModelJson(result) : result);
+        if (!parsed.success) {
+          throw new MakeMcpError(
+            "SPEC_INVALID",
+            `Result does not match the schema: ${parsed.error.issues
+              .slice(0, 5)
+              .map((i) => `${i.path.join(".")}: ${i.message}`)
+              .join("; ")}`,
+          );
+        }
+        s.extraction.results.set(taskId, parsed.data);
+        s.project = undefined;
+        return json(extractionSummary(s, s.resolved));
       } catch (err) {
         return failure(err);
       }
@@ -177,7 +287,14 @@ export function createMakeMcpServer(options: ServerOptions = {}): McpServer {
       try {
         const s = session(sessionId);
         const resolved = s.resolved ?? resolveIntake(s.findings, s.answers);
-        const project = await generateProject(resolved, { ...fetchers, workspaceRoot: s.findings.workspaceRoot });
+        if (resolved.apiSource === "docs" && !s.extraction?.spec) {
+          throw new MakeMcpError("INTAKE_INCOMPLETE", "Extract the API first: extract_api → submit_extraction for every task.");
+        }
+        const project = await generateProject(resolved, {
+          ...fetchers,
+          workspaceRoot: s.findings.workspaceRoot,
+          ...(s.extraction?.spec ? { extractedApi: s.extraction.spec, corpus: s.extraction.corpus } : {}),
+        });
         const files = writeProject(project);
         if (zip) writeFileSync(`${project.outDir}.zip`, zipProject(project));
         s.project = project;

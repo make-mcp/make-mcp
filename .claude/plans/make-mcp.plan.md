@@ -71,7 +71,7 @@ Regeln: Felder mit hoher Erkennungssicherheit werden nur in der Abschlusszusamme
 |---|---|---|---|
 | M0 | Repo-Setup, Tooling, CI | done | dieses Dokument |
 | M1 | Core (IR, Discovery, Intake, Generator beide Modi) + MCP-Server + Claude-Code-Plugin + CLI | done (Live-Agent-Test offen) | dieses Dokument |
-| M2 | LLM-Extraktion Markdown-API-Docs, Gruppierung großer APIs, Python-Templates vollständig, Python-Workspace-Detection | pending | – |
+| M2 | LLM-Extraktion Markdown-API-Docs, Gruppierung großer APIs, Python-Templates vollständig, Python-Workspace-Detection | done | dieses Dokument (Abweichungen unten) |
 | M3 | Lokale Web-UI + Docker-Image | pending | – |
 | M4 | Cloud-Run-Deploy-Vorlagen | pending | – |
 | M5 | Community-Katalog + Rebuild-Action, Plugin-Marketplace-Einträge | pending | – |
@@ -196,6 +196,10 @@ claude plugin validate plugins/claude-code && claude plugin validate .
 | `register` ruft `claude mcp add` | globaler Scope liefert nur den Befehl | keine ungefragten Änderungen an User-Configs |
 | Fragen `kind`, `license` | still erkannt, nicht gefragt | weniger Rückfragen (daisyUI: 2, Petstore: 2) |
 | — | `local-docs`-Quelle (lokaler Checkout) | deckt „Code liegt lokal“ aus dem Intake ab |
+| M2: `llm/`-Paket mit Provider-Abstraktion | `core/src/extract/` (prose-api + schlanker LLM-Client ohne SDK, nur CLI) | im Agent-Modus extrahiert das Agent-LLM über `extract_api`/`submit_extraction`; kein Key, keine Zusatzabhängigkeit |
+| M2: Halluzinationsschutz „Review im Intake“ | jede Operation braucht ein wörtliches Zitat; Zitat, Pfad und Methode werden gegen die zitierte Seite geprüft | deterministisch statt nur Sichtprüfung; abgelehnte Operationen werden mit Grund gemeldet |
+| M2: Gruppierung per Tags | drei Meta-Tools (`list_operations`/`describe_operation`/`call_operation`) ab 40 Operationen, `--tools` zum Übersteuern | skaliert auf beliebig große APIs, keine zusätzliche Intake-Frage |
+| M2: Python-Templates | BM25-Suche, Legacy-SSE, `--refresh` (delegiert an `npx @make-mcp/cli refresh`) | Laufzeit bleibt abhängigkeitsfrei; Doku-Loader existiert nur einmal (TS) |
 
 ## Risks
 | Risk | Likelihood | Mitigation |

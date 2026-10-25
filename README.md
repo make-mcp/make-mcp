@@ -24,7 +24,22 @@ Two kinds of servers, combinable:
 | Mode | Source | Tools |
 |---|---|---|
 | `docs` | llms-full.txt → llms.txt → repo docs at the version tag → website → README → local checkout | `search_docs`, `get_page`, `list_topics`, `get_component`; one resource per page |
-| `api` | OpenAPI 3.x / Swagger 2.0 | one tool per operation (with read-only/destructive hints), GET resources, auth via env vars, version via path/header/query |
+| `api` | OpenAPI 3.x / Swagger 2.0, or prose API docs (extracted by an LLM, see below) | one tool per operation (with read-only/destructive hints), GET resources, auth via env vars, version via path/header/query; above 40 operations three tools instead: `list_operations`, `describe_operation`, `call_operation` |
+
+Versions are read from npm lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`) and Python projects
+(`uv.lock`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, a local `.venv`, `requirements*.txt`, `pyproject.toml`).
+
+### APIs without an OpenAPI spec
+
+If an API is only documented in prose, an LLM extracts the operations – inside a coding agent that is the agent's
+own model, so no API key is needed. Every operation must quote the page it came from; make-mcp rejects operations
+whose quote, path or method cannot be found on that page, and takes base URL and auth only when the docs state them.
+The CLI uses your own model instead:
+
+```bash
+ANTHROPIC_API_KEY=… npx @make-mcp/cli create https://docs.example.com
+MAKE_MCP_LLM_BASE_URL=http://localhost:11434/v1 MAKE_MCP_LLM_MODEL=qwen3 npx @make-mcp/cli create …   # Ollama & co.
+```
 
 Generated servers speak **stdio** and **Streamable HTTP** (legacy SSE via flag), ship a Dockerfile for
 Cloud Run & co., and contain no dependency on this generator.
@@ -96,7 +111,7 @@ claude mcp add make-mcp-dev -- node "$PWD/packages/cli/dist/index.js" mcp
 
 ## Roadmap
 
-- M2: LLM-assisted API extraction from prose docs, grouping for large APIs, Python workspace detection
+- ~~M2: LLM-assisted API extraction from prose docs, grouping for large APIs, Python workspace detection~~ ✓
 - M3: local web UI and Docker image
 - M4: Cloud Run deploy templates (Skaffold/Cloud Code)
 - M5: community catalog of generator configs

@@ -23,6 +23,12 @@ cannot be found automatically. Speak the user's language; tool output is English
    `questions` is not empty.
 4. **Confirm** – call `preview_plan`, show the summary unchanged, and ask for explicit confirmation.
    Do not generate without a clear yes.
+4b. **Extract (only if `preview_plan` asks for it)** – the API has no OpenAPI spec, so you extract it from the
+   documentation with your own model; no API key is involved. Call `extract_api`, read the returned `pages` and
+   answer with JSON exactly as `instructions` and `schema` say: only operations the pages document, each with a
+   verbatim `quote` from the cited page. Pass it to `submit_extraction` with the `taskId`. Repeat until
+   `remainingTasks` is empty, then show the user the `accepted` operations (and `rejected` ones with reasons).
+   If no base URL was found, tell the user which variable to set.
 5. **Generate & test** – call `generate_server`, then `test_server` with the same `sessionId`. Report the tools,
    warnings (e.g. docs that are downloaded on install because the license does not allow embedding) and
    any test failure verbatim.
@@ -33,6 +39,8 @@ cannot be found automatically. Speak the user's language; tool output is English
 
 ## Rules
 
+- Large APIs (more than 40 operations) get three tools (`list_operations`, `describe_operation`,
+  `call_operation`) instead of one per operation; mention this when you report the tools.
 - Prefer what detection found over guesses; if detection is wrong, let the user correct it via the questions.
 - Content behind logins or paywalls is never used. robots.txt and TDM reservations are honoured by the tools.
 - If a step fails with `SOURCE_NOT_FOUND`, ask the user for a docs/spec URL or a code location and submit it as

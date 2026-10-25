@@ -6,7 +6,9 @@ import {
   applyRegistration,
   applySourceAnswers,
   createFetchers,
+  createLlmFromEnv,
   detectContext,
+  finishExtraction,
   generateProject,
   isMakeMcpError,
   nextQuestions,
@@ -14,9 +16,13 @@ import {
   planRegistration,
   refreshDocs,
   resolveIntake,
+  runExtraction,
+  startExtraction,
   summarizeIntake,
   writeProject,
   zipProject,
+  type ApiSpec,
+  type DocCorpus,
   type Fetchers,
   type GeneratedProject,
   type IntakeAnswers,
@@ -43,6 +49,12 @@ Options for create/generate:
   --scope <all|tag,…>   --transport <stdio|http>   --register <project|global|none>
   --tools <endpoints|grouped>   (default: grouped above 40 API operations)
   --client <claude-code|cursor>   --zip   --yes   --allow-private   --fixtures <dir>
+
+APIs without an OpenAPI spec are extracted from their documentation by an LLM. Inside a coding agent
+(plugin / "make-mcp mcp") the agent's own model does it. The CLI needs one of:
+  ANTHROPIC_API_KEY                                   Anthropic (MAKE_MCP_LLM_MODEL, default claude-sonnet-5-5)
+  MAKE_MCP_LLM_BASE_URL + MAKE_MCP_LLM_MODEL          any OpenAI-compatible endpoint, e.g. Ollama: http://localhost:11434/v1
+  OPENAI_API_KEY + MAKE_MCP_LLM_MODEL                 OpenAI
 `;
 
 const out = (line = "") => process.stdout.write(`${line}\n`);
@@ -132,6 +144,33 @@ async function intake(fetchers: Fetchers, interactive: boolean): Promise<Resolve
   return resolveIntake(findings, answers, { useDefaults: values.yes || !interactive });
 }
 
+async function extractApi(resolved: ResolvedIntake, fetchers: Fetchers, interactive: boolean): Promise<{ spec: ApiSpec; corpus: DocCorpus } | undefined> {
+  const llm = createLlmFromEnv();
+  if (!llm) {
+    throw new Error(
+      "This API has no OpenAPI spec and must be extracted from its documentation by an LLM. Run make-mcp inside your coding agent " +
+        "(its model does the extraction, no key needed) or configure one for the CLI – see `make-mcp --help`.",
+    );
+  }
+  out("Loading the documentation …");
+  const { corpus, plan } = await startExtraction(resolved, fetchers);
+  const pages = plan.tasks.reduce((n, t) => n + t.pages.length, 0);
+  out(`${pages} of ${corpus.pages.length} pages look like API reference (${plan.tasks.length} batch${plan.tasks.length === 1 ? "" : "es"}).`);
+  if (interactive && !(await confirmStep(`Send them to ${llm.label} to extract the operations?`))) return undefined;
+
+  const results = await runExtraction(plan, llm, { onTask: (i, total) => out(`  extracting batch ${i + 1}/${total} …`) });
+  const { spec, validated } = finishExtraction(resolved, corpus, results);
+  out(`\nExtracted ${spec.endpoints.length} operations (checked against the documentation):`);
+  spec.endpoints.forEach((e) => out(`  ${e.method.toUpperCase().padEnd(6)} ${e.path} – ${e.summary ?? e.id}`));
+  if (validated.rejected.length) {
+    out(`Rejected ${validated.rejected.length} (not backed by the docs):`);
+    validated.rejected.forEach((r) => out(`  ${r.method.padEnd(6)} ${r.path} – ${r.reason}`));
+  }
+  validated.notes.forEach((n) => out(`  note: ${n}`));
+  if (interactive && !(await confirmStep("Generate the server with these operations?"))) return undefined;
+  return { spec, corpus };
+}
+
 async function generate(interactive: boolean): Promise<void> {
   const fetchers = createFetchers({ allowPrivateNetworks: values["allow-private"], ...(values.fixtures ? { fixturesDir: values.fixtures } : {}) });
   const resolved = await intake(fetchers, interactive);
@@ -139,7 +178,13 @@ async function generate(interactive: boolean): Promise<void> {
   if (interactive && !(await confirmStep("Generate this server?"))) return;
 
   const workspaceRoot = resolve(values.workspace ?? process.cwd());
-  const project: GeneratedProject = await generateProject(resolved, { ...fetchers, workspaceRoot });
+  const extracted = resolved.apiSource === "docs" ? await extractApi(resolved, fetchers, interactive) : undefined;
+  if (resolved.apiSource === "docs" && !extracted) return;
+  const project: GeneratedProject = await generateProject(resolved, {
+    ...fetchers,
+    workspaceRoot,
+    ...(extracted ? { extractedApi: extracted.spec, corpus: extracted.corpus } : {}),
+  });
   writeProject(project);
   out(`Wrote ${Object.keys(project.files).length} files to ${project.outDir}`);
   out(`Tools: ${project.tools.join(", ")}`);
