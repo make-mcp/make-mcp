@@ -4,7 +4,7 @@ import { Agent, fetch as undiciFetch } from "undici";
 import { MakeMcpError } from "../errors.js";
 import type { Fetcher, FetchResult } from "./types.js";
 
-export const USER_AGENT = "make-mcp/0.1 (+https://github.com/make-mcp/make-mcp)";
+export const USER_AGENT = "make-mcp/0.1 (+https://make-mcp.net)";
 
 export interface SafeFetchOptions {
   /** Allow RFC1918/loopback/ULA targets, e.g. for internal docs on the user's own machine. */
