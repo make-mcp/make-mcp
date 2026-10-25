@@ -87,6 +87,10 @@ export interface ResolvedIntake {
   license?: string;
   docs: DocsSource[];
   openapiUrl?: string;
+  /** "docs": no OpenAPI spec – operations are extracted from the documentation by an LLM before generating. */
+  apiSource?: "openapi" | "docs";
+  /** Documentation the API is extracted from (independent of whether docs tools are generated). */
+  extractionDocs?: DocsSource[];
   auth: NonNullable<IntakeAnswers["auth"]>;
   scopeTags?: string[];
   language: "ts" | "py";

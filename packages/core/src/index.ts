@@ -19,6 +19,10 @@ export {
   zipProject,
   refreshDocs,
   corpusCachePath,
+  startExtraction,
+  finishExtraction,
+  GROUP_THRESHOLD,
+  type ExtractionStart,
   GENERATOR_PACKAGE,
   GENERATOR_VERSION,
   type GenerateOptions,
@@ -27,5 +31,23 @@ export {
   type EnvVar,
   type RefreshOptions,
 } from "./generate/project.js";
+export {
+  planExtraction,
+  renderTask,
+  validateExtraction,
+  extractionToSpec,
+  extractionJsonSchema,
+  parseModelJson,
+  canonicalPath,
+  ExtractionResultSchema,
+  EXTRACTION_INSTRUCTIONS,
+  type ExtractionPlan,
+  type ExtractionTask,
+  type ExtractionResult,
+  type ExtractedOperation,
+  type ValidatedExtraction,
+  type Rejection,
+} from "./extract/prose-api.js";
+export { createLlmFromEnv, anthropicClient, openAiCompatibleClient, runExtraction, DEFAULT_ANTHROPIC_MODEL, type LlmClient } from "./extract/llm.js";
 export { planRegistration, applyRegistration, type AgentClient, type RegisterInput, type RegistrationPlan } from "./generate/register.js";
 export { createFetchers, type Fetchers, type FetcherConfig } from "./fetch/defaults.js";

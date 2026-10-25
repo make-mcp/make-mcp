@@ -79,7 +79,7 @@ export function toSnakeCase(text: string): string {
     .toLowerCase();
 }
 
-function endpointId(method: Method, path: string, operationId: unknown): string {
+export function endpointId(method: Method, path: string, operationId: unknown): string {
   if (typeof operationId === "string" && toSnakeCase(operationId)) return toSnakeCase(operationId).slice(0, 64);
   const segments = path
     .split("/")
@@ -88,7 +88,7 @@ function endpointId(method: Method, path: string, operationId: unknown): string 
   return toSnakeCase([method, ...segments].join("_")).slice(0, 64) || method;
 }
 
-function uniqueIds(endpoints: Endpoint[]): Endpoint[] {
+export function uniqueIds(endpoints: Endpoint[]): Endpoint[] {
   const used = new Map<string, number>();
   return endpoints.map((ep) => {
     const count = used.get(ep.id) ?? 0;

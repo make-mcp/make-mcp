@@ -11,6 +11,7 @@ import type { ApiSpec, AuthScheme, DocCorpus, SourceRef } from "../ir/index.js";
 import { contentModeFor, type ContentMode } from "../license.js";
 import { loadDocCorpus, type DocsSource } from "../parse/docs-corpus.js";
 import { applyRequestedVersion, openApiToSpec, parseApiDocument } from "../parse/openapi.js";
+import { extractionToSpec, planExtraction, validateExtraction, type ExtractionPlan, type ExtractionResult, type ValidatedExtraction } from "../extract/prose-api.js";
 
 export const GENERATOR_PACKAGE = "@make-mcp/cli";
 export const GENERATOR_VERSION = "0.1.0";
@@ -28,6 +29,10 @@ export interface GenerateOptions {
   /** Directory relative outDirs resolve against (the user's workspace). */
   workspaceRoot: string;
   now?: () => Date;
+  /** API spec extracted from prose docs (required when resolved.apiSource is "docs"). */
+  extractedApi?: ApiSpec;
+  /** Already loaded documentation, e.g. from the extraction step, to avoid fetching twice. */
+  corpus?: DocCorpus;
 }
 
 export interface Manifest {
@@ -49,6 +54,8 @@ export interface EnvVar {
   description: string;
   /** Credentials; optional overrides such as base URL are not secret. */
   secret: boolean;
+  /** Must be set even though it is not a credential (e.g. a base URL the docs do not state). */
+  required?: boolean;
 }
 
 export interface GeneratedProject {
@@ -91,7 +98,11 @@ function envVarsFor(spec: ApiSpec | undefined, envPrefix: string): EnvVar[] {
       }
     }
   }
-  vars.push({ name: `${envPrefix}_BASE_URL`, description: `Override the base URL (default ${spec.baseUrl})`, secret: false });
+  vars.push(
+    spec.baseUrl
+      ? { name: `${envPrefix}_BASE_URL`, description: `Override the base URL (default ${spec.baseUrl})`, secret: false }
+      : { name: `${envPrefix}_BASE_URL`, description: "Base URL of the API (required – the documentation does not state it)", secret: false, required: true },
+  );
   if (spec.versionStrategy.type !== "none") {
     vars.push({ name: `${envPrefix}_API_VERSION`, description: `API version (default ${spec.versionStrategy.default})`, secret: false });
   }
@@ -121,17 +132,35 @@ function fallbackAuth(auth: ResolvedIntake["auth"], envPrefix: string): AuthSche
   }
 }
 
-async function buildApiSpec(resolved: ResolvedIntake, options: GenerateOptions, warnings: string[]): Promise<ApiSpec | undefined> {
-  if (!resolved.openapiUrl) return undefined;
-  const res = await options.contentFetcher(resolved.openapiUrl, { accept: "application/json,application/yaml,text/yaml" });
-  if (!res.ok) throw new MakeMcpError("SOURCE_NOT_FOUND", `Could not load ${resolved.openapiUrl} (HTTP ${res.status})`);
-  let spec = openApiToSpec(parseApiDocument(res.body), {
+async function loadOpenApiSpec(url: string, resolved: ResolvedIntake, options: GenerateOptions): Promise<ApiSpec> {
+  const res = await options.contentFetcher(url, { accept: "application/json,application/yaml,text/yaml" });
+  if (!res.ok) throw new MakeMcpError("SOURCE_NOT_FOUND", `Could not load ${url} (HTTP ${res.status})`);
+  return openApiToSpec(parseApiDocument(res.body), {
     sourceUrl: res.url,
     envPrefix: resolved.envPrefix,
     fetchedAt: (options.now ?? (() => new Date()))().toISOString(),
   });
+}
 
-  if (resolved.version !== "latest" && resolved.version !== spec.specVersion) {
+async function buildApiSpec(resolved: ResolvedIntake, options: GenerateOptions, warnings: string[]): Promise<ApiSpec | undefined> {
+  let spec: ApiSpec;
+  if (resolved.apiSource === "docs") {
+    if (!options.extractedApi) {
+      throw new MakeMcpError(
+        "INTAKE_INCOMPLETE",
+        "The API has to be extracted from the documentation first (agent: extract_api + submit_extraction; CLI: configure an LLM).",
+      );
+    }
+    if (options.extractedApi.endpoints.length === 0) throw new MakeMcpError("SOURCE_NOT_FOUND", "No API operations could be extracted from the documentation.");
+    spec = options.extractedApi;
+    if (!spec.baseUrl) warnings.push(`The documentation does not state a base URL – set ${resolved.envPrefix}_BASE_URL before using the API tools.`);
+  } else if (resolved.openapiUrl) {
+    spec = await loadOpenApiSpec(resolved.openapiUrl, resolved, options);
+  } else {
+    return undefined;
+  }
+
+  if (resolved.apiSource !== "docs" && resolved.version !== "latest" && resolved.version !== spec.specVersion) {
     const applied = applyRequestedVersion(spec, resolved.version);
     spec = applied.spec;
     if (!applied.applied && spec.versionStrategy.type !== "none") {
@@ -148,7 +177,12 @@ async function buildApiSpec(resolved: ResolvedIntake, options: GenerateOptions, 
 
 async function buildCorpus(resolved: ResolvedIntake, options: GenerateOptions): Promise<DocCorpus | undefined> {
   if (resolved.docs.length === 0) return undefined;
-  const corpus = await loadDocCorpus(resolved.docs, {
+  if (options.corpus && options.corpus.pages.length > 0) return options.corpus;
+  return loadCorpus(resolved.docs, resolved, options);
+}
+
+async function loadCorpus(sources: DocsSource[], resolved: ResolvedIntake, options: Pick<GenerateOptions, "apiFetcher" | "contentFetcher" | "now">): Promise<DocCorpus> {
+  const corpus = await loadDocCorpus(sources, {
     contentFetcher: options.contentFetcher,
     apiFetcher: options.apiFetcher,
     title: resolved.target,
@@ -157,9 +191,43 @@ async function buildCorpus(resolved: ResolvedIntake, options: GenerateOptions): 
     ...(options.now ? { now: options.now } : {}),
   });
   if (corpus.pages.length === 0) {
-    throw new MakeMcpError("SOURCE_NOT_FOUND", `None of the documentation sources yielded pages: ${resolved.docs.map((d) => d.url).join(", ")}`);
+    throw new MakeMcpError("SOURCE_NOT_FOUND", `None of the documentation sources yielded pages: ${sources.map((d) => d.url).join(", ")}`);
   }
   return corpus;
+}
+
+export interface ExtractionStart {
+  corpus: DocCorpus;
+  plan: ExtractionPlan;
+}
+
+/** Loads the documentation for an API extraction and batches the pages that look like API reference. */
+export async function startExtraction(resolved: ResolvedIntake, options: Pick<GenerateOptions, "apiFetcher" | "contentFetcher" | "now">): Promise<ExtractionStart> {
+  const sources = resolved.extractionDocs ?? resolved.docs;
+  if (sources.length === 0) throw new MakeMcpError("SOURCE_NOT_FOUND", "No documentation to extract the API from.");
+  const corpus = await loadCorpus(sources, resolved, options);
+  const plan = planExtraction(corpus);
+  if (plan.tasks.length === 0) {
+    throw new MakeMcpError("SOURCE_NOT_FOUND", `The documentation (${corpus.pages.length} pages) does not look like it documents an HTTP API.`);
+  }
+  return { corpus, plan };
+}
+
+/** Validates model output against the documentation and builds the API spec for generateProject. */
+export function finishExtraction(
+  resolved: ResolvedIntake,
+  corpus: DocCorpus,
+  results: ExtractionResult[],
+  now: () => Date = () => new Date(),
+): { spec: ApiSpec; validated: ValidatedExtraction } {
+  const validated = validateExtraction(results, corpus);
+  const spec = extractionToSpec(validated, corpus, {
+    title: resolved.target,
+    version: resolved.version,
+    envPrefix: resolved.envPrefix,
+    fetchedAt: now().toISOString(),
+  });
+  return { spec, validated };
 }
 
 function runCommand(language: "ts" | "py", outDir: string): { command: string; args: string[] } {
@@ -246,9 +314,9 @@ export async function generateProject(resolved: ResolvedIntake, options: Generat
     generatedAt: now.toISOString().slice(0, 10),
     license: resolved.license,
     docs: corpus && contentMode ? { contentMode, sources: corpus.sources, pageCount: corpus.pages.length, componentCount: components } : undefined,
-    api: spec ? { title: spec.title, baseUrl: spec.baseUrl, endpointCount: spec.endpoints.length, toolMode } : undefined,
+    api: spec ? { title: spec.title, baseUrl: spec.baseUrl, endpointCount: spec.endpoints.length, toolMode, extracted: resolved.apiSource === "docs" } : undefined,
     envVars,
-    secretVars: envVars.filter((v) => v.secret),
+    secretVars: envVars.filter((v) => v.secret || v.required),
     run,
   };
 

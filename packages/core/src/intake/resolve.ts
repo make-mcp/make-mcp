@@ -30,12 +30,11 @@ export function resolveIntake(findings: Findings, answers: IntakeAnswers, option
   if (needsDocs && findings.docsCandidates.length === 0) {
     throw new MakeMcpError("SOURCE_NOT_FOUND", `No documentation source found for ${findings.target}`, { missing: ["docsSource"] });
   }
-  if (needsApi && !findings.openapi) {
-    throw new MakeMcpError(
-      "SOURCE_NOT_FOUND",
-      `No OpenAPI/Swagger spec found for ${findings.target}. Extracting APIs from prose documentation is planned for a later release.`,
-      { missing: ["docsSource"] },
-    );
+  const extractApi = needsApi && !findings.openapi && findings.docsCandidates.length > 0 && filled.docsSource !== "none";
+  if (needsApi && !findings.openapi && !extractApi) {
+    throw new MakeMcpError("SOURCE_NOT_FOUND", `No OpenAPI/Swagger spec and no documentation found for ${findings.target}.`, {
+      missing: ["docsSource"],
+    });
   }
 
   const scopeTags =
@@ -54,7 +53,8 @@ export function resolveIntake(findings: Findings, answers: IntakeAnswers, option
     version: filled.version ?? findings.version?.value ?? "latest",
     ...(findings.license ? { license: findings.license.value } : {}),
     docs: needsDocs ? findings.docsCandidates : [],
-    ...(needsApi && findings.openapi ? { openapiUrl: findings.openapi.url } : {}),
+    ...(needsApi && findings.openapi ? { openapiUrl: findings.openapi.url, apiSource: "openapi" as const } : {}),
+    ...(extractApi ? { apiSource: "docs" as const, extractionDocs: findings.docsCandidates } : {}),
     auth: filled.auth ?? "none",
     ...(scopeTags ? { scopeTags } : {}),
     language: filled.language ?? findings.language?.value ?? "ts",
@@ -78,6 +78,9 @@ export function summarizeIntake(resolved: ResolvedIntake): string {
     ...(resolved.docs[0] ? [`Docs source: ${resolved.docs[0].kind} – ${resolved.docs[0].url}${resolved.docs[0].ref ? ` @ ${resolved.docs[0].ref}` : ""}`] : []),
     ...(resolved.docs.length > 1 ? [`Fallbacks:   ${resolved.docs.slice(1).map((d) => d.kind).join(", ")}`] : []),
     ...(resolved.openapiUrl ? [`API spec:    ${resolved.openapiUrl}`, `Auth:        ${resolved.auth === "none" ? "from spec" : resolved.auth}`] : []),
+    ...(resolved.apiSource === "docs"
+      ? [`API spec:    extracted from the documentation by an LLM, every operation checked against its source page`]
+      : []),
     ...(resolved.scopeTags ? [`Scope:       ${resolved.scopeTags.join(", ")}`] : []),
     ...(resolved.toolMode ? [`API tools:   ${resolved.toolMode === "grouped" ? "grouped (list/describe/call)" : "one per operation"}`] : []),
     `License:     ${resolved.license ?? "unknown"} → docs ${contentMode === "embedded" ? "embedded in the server" : "fetched on first start (not redistributed)"}`,

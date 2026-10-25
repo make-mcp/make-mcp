@@ -1,0 +1,42 @@
+# Acme Notes API
+
+Acme Notes is a small note-taking service. The REST API lives at `https://api.notes.example.com/v1`.
+
+## Authentication
+
+Every request needs your API key in the `X-Api-Key` header. Create keys in the dashboard.
+
+## List notes
+
+`GET /notes` returns your notes, newest first.
+
+Query parameters:
+
+- `limit` (integer, optional) – at most this many notes, default 20
+- `tag` (string, optional) – only notes with this tag
+
+```bash
+curl -H "X-Api-Key: $KEY" "https://api.notes.example.com/v1/notes?limit=5"
+```
+
+## Create a note
+
+Send a `POST /notes` request with a JSON body:
+
+- `title` (string, required)
+- `body` (string, required)
+- `tags` (array of strings, optional)
+
+Responds with status code 201 and the created note.
+
+## Get a note
+
+`GET /notes/:id` returns one note.
+
+## Delete a note
+
+`DELETE /notes/{id}` deletes a note permanently. Responds with status code 204.
+
+## Changelog
+
+- 2026-09: notes can have tags.

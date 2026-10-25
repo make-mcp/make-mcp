@@ -25,13 +25,20 @@ function buildQuestion(id: QuestionId, findings: Findings, answers: IntakeAnswer
       const missingDocs = needsDocs(mode) && findings.docsCandidates.length === 0;
       const missingSpec = needsApi(mode) && !findings.openapi;
       if (!missingDocs && !missingSpec) return undefined;
+      const canExtract = missingSpec && !missingDocs && findings.docsCandidates.length > 0;
       return {
         id,
         header: missingSpec ? "API spec" : "Docs",
         question: missingSpec
-          ? `No OpenAPI/Swagger spec found for ${findings.target}. Where is it (URL)?`
+          ? `No OpenAPI/Swagger spec found for ${findings.target}. ${canExtract ? "Extract the API from its documentation, or give the spec URL?" : "Where is it (URL)?"}`
           : `No documentation found for ${findings.target}. Is there documentation (URL to docs, llms.txt or README)?`,
-        options: [{ value: "none", label: "None", description: "There is no documentation" }],
+        options: [
+          ...(canExtract
+            ? [{ value: "extract", label: "Extract from the docs", description: "An LLM reads the API docs; every endpoint is checked against the source" }]
+            : []),
+          { value: "none", label: "None", description: missingSpec ? "There is no API description" : "There is no documentation" },
+        ],
+        ...(canExtract ? { default: "extract" } : {}),
         allowFreeText: true,
       };
     }

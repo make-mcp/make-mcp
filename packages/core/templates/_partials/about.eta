@@ -27,6 +27,10 @@ The documentation is **not** included in this package. It is downloaded from the
 <% if (it.api) { %>
 ## API tools
 
+<% if (it.api.extracted) { %>
+> The operations were extracted from the prose documentation by an LLM. Each one was checked against the page
+> it was quoted from, but parameters and bodies can still be incomplete – review `data/api.json` before relying on it.
+<% } %>
 <% if (it.api.toolMode === "grouped") { %>
 <%= it.api.endpointCount %> operations of **<%= it.api.title %>** (`<%= it.api.baseUrl %>`), exposed through three tools so the
 agent's context stays small:
