@@ -2,9 +2,10 @@ import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { BlockList, isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
 import { MakeMcpError } from "../errors.js";
+import { VERSION } from "../version.js";
 import type { Fetcher, FetchResult } from "./types.js";
 
-export const USER_AGENT = "make-mcp/0.1 (+https://make-mcp.net)";
+export const USER_AGENT = `make-mcp/${VERSION} (+https://make-mcp.net)`;
 
 export interface SafeFetchOptions {
   /** Allow RFC1918/loopback/ULA targets, e.g. for internal docs on the user's own machine. */

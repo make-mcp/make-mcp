@@ -17,22 +17,22 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - name: Smoke test
         run: |
           docker build -t make-mcp:ci .
           docker run --rm make-mcp:ci --help | grep -q "make-mcp"
       - if: startsWith(github.ref, 'refs/tags/v')
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - if: startsWith(github.ref, 'refs/tags/v')
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/make-mcp/make-mcp
           tags: |
@@ -40,7 +40,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
       - if: startsWith(github.ref, 'refs/tags/v')
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64

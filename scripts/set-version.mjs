@@ -28,7 +28,7 @@ const edits = [
     [new RegExp(`("@make-mcp/mcp-server": ")${v}`), `$1${version}`],
   ]],
   ["packages/mcp-server/src/server.ts", [[new RegExp(`(SERVER_VERSION = ")${v}`), `$1${version}`]]],
-  ["packages/core/src/generate/project.ts", [[new RegExp(`(GENERATOR_VERSION = ")${v}`), `$1${version}`]]],
+  ["packages/core/src/version.ts", [[new RegExp(`(VERSION = ")${v}`), `$1${version}`]]],
   ["plugins/claude-code/.claude-plugin/plugin.json", [[new RegExp(`("version": ")${v}`), `$1${version}`]]],
   ["plugins/claude-code/.mcp.json", [[new RegExp(`(@make-mcp/cli@)${v}`), `$1${version}`]]],
 ];
