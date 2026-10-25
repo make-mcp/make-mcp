@@ -9,3 +9,11 @@
    free of generator dependencies. Keep TS and Python behaviour (tool names, resource URIs) identical –
    `npm run test:e2e` checks both.
 6. Only add documentation sources that are publicly accessible; never bypass robots.txt, TDM reservations or logins.
+
+## Releasing
+
+1. `npm run set-version -- 0.2.0 && npm install` – updates every pinned version (packages, internal
+   dependencies, runtime constants, Claude Code plugin) and the lockfile.
+2. Commit, then `git tag v0.2.0 && git push --follow-tags`.
+3. The `Release` workflow tests everything and publishes `@make-mcp/core`, `@make-mcp/mcp-server` and
+   `@make-mcp/cli` via npm trusted publishing (no token).

@@ -1,0 +1,36 @@
+name: Release
+
+# Publishes all packages to npm when a version tag (v1.2.3) is pushed.
+# Uses npm trusted publishing (OIDC) – no NPM_TOKEN secret needed. Each package must list this
+# workflow as trusted publisher on npmjs.com (Settings → Trusted publisher → GitHub Actions).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - uses: astral-sh/setup-uv@v6
+      - run: npm install -g npm@11
+      - run: npm ci
+      - name: Check tag matches pinned versions
+        run: node scripts/set-version.mjs --check "${GITHUB_REF_NAME#v}"
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:e2e
+      - run: npm publish -w @make-mcp/core
+      - run: npm publish -w @make-mcp/mcp-server
+      - run: npm publish -w @make-mcp/cli
