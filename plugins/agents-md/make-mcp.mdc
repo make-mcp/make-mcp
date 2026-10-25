@@ -1,0 +1,9 @@
+---
+description: Generate MCP servers with make-mcp when the user asks for an MCP server for a library, product or API
+alwaysApply: false
+---
+
+Use the `make-mcp` MCP server for this. Follow its `create_mcp` prompt:
+detect_context → ask the returned questions (pre-select defaults, never answer for the user) → submit_answers →
+preview_plan and wait for an explicit yes → generate_server → test_server → register_server (show diff, apply only
+after agreement). Never ask for secret values in chat.

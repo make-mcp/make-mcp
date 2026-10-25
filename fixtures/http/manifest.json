@@ -1,0 +1,8 @@
+{
+  "https://registry.npmjs.org/daisyui/latest": { "file": "files/npm-daisyui-latest.json", "contentType": "application/json" },
+  "https://api.github.com/repos/saadeghi/daisyui/tags?per_page=100": { "file": "files/github-daisyui-tags.json", "contentType": "application/json" },
+  "https://daisyui.com/": { "file": "files/daisyui-home.html", "contentType": "text/html; charset=utf-8" },
+  "https://daisyui.com/robots.txt": { "file": "files/daisyui-robots.txt", "contentType": "text/plain" },
+  "https://daisyui.com/llms.txt": { "file": "files/daisyui-llms.txt", "contentType": "text/plain; charset=utf-8" },
+  "https://petstore3.example.com/openapi.yaml": { "file": "files/petstore-v3.yaml", "contentType": "application/yaml" }
+}

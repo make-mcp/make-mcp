@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "make-mcp": {
+      "command": "npx",
+      "args": ["-y", "make-mcp@0.1.0", "mcp"]
+    }
+  }
+}

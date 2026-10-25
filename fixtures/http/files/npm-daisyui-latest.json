@@ -1,0 +1,8 @@
+{
+  "name": "daisyui",
+  "version": "5.7.50",
+  "description": "daisyUI 5 - The Tailwind CSS Component Library",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/saadeghi/daisyui.git" },
+  "homepage": "https://daisyui.com"
+}

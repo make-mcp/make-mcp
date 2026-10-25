@@ -1,0 +1,28 @@
+## Use it
+
+### Claude Code
+
+```bash
+claude mcp add <%= it.name %><% for (const v of it.secretVars) { %> -e <%= v.name %>=…<% } %> -- <%= it.run.command %> <%= it.run.args.join(" ") %>
+```
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
+
+```json
+<%~ JSON.stringify({ mcpServers: { [it.name]: { command: it.run.command, args: it.run.args, ...(it.secretVars.length ? { env: Object.fromEntries(it.secretVars.map((v) => [v.name, "…"])) } : {}) } } }, null, 2) %>
+```
+
+### Cursor
+
+Add the same block to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global).
+
+### Remote (Streamable HTTP)
+
+```bash
+MCP_TRANSPORT=http PORT=3000 MCP_AUTH_TOKEN=change-me <%= it.run.command %> <%= it.run.args.join(" ") %>
+# endpoint: http://localhost:3000/mcp  (legacy SSE clients: MCP_TRANSPORT=sse → /sse)
+```
+
+A `Dockerfile` is included for container platforms such as Google Cloud Run (listens on `$PORT`, scales to zero).

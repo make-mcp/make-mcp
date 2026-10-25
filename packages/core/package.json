@@ -1,0 +1,30 @@
+{
+  "name": "@make-mcp/core",
+  "version": "0.1.0",
+  "description": "Discovery, intake and code generation for make-mcp",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "eta": "4.6.0",
+    "fflate": "0.8.3",
+    "semver": "7.8.5",
+    "turndown": "7.2.4",
+    "undici": "8.12.3",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  }
+}

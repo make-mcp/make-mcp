@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:e2e
+      - name: Validate Claude Code plugin manifests
+        run: node -e "for (const f of ['plugins/claude-code/.claude-plugin/plugin.json','.claude-plugin/marketplace.json','plugins/claude-code/.mcp.json']) JSON.parse(require('fs').readFileSync(f,'utf8'))"

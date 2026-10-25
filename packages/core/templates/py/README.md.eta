@@ -1,0 +1,17 @@
+<%~ include("/_partials/about", it) %>
+
+## Install
+
+Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync
+```
+
+<%~ include("/_partials/clients", it) %>
+
+## Regenerate
+
+```bash
+npx make-mcp create <%= it.target %>
+```

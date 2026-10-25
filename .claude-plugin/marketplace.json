@@ -1,0 +1,16 @@
+{
+  "name": "make-mcp",
+  "owner": {
+    "name": "make-mcp contributors"
+  },
+  "metadata": {
+    "description": "make-mcp \u2013 generate MCP servers from docs, specs or source code"
+  },
+  "plugins": [
+    {
+      "name": "make-mcp",
+      "source": "./plugins/claude-code",
+      "description": "Generate MCP servers for any library, product or API from docs, llms.txt, OpenAPI or source code."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@make-mcp/mcp-server",
+  "version": "0.1.0",
+  "description": "make-mcp exposed as an MCP server for coding agents",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@make-mcp/core": "0.1.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  }
+}

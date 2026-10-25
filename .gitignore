@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.e2e/
+.env
+.DS_Store
+__pycache__/
+.venv/
+.e2e-ws-*/

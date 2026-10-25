@@ -1,0 +1,96 @@
+openapi: 3.0.3
+info:
+  title: Swagger Petstore
+  version: 1.0.27
+  description: Sample pet store (trimmed fixture).
+servers:
+  - url: https://petstore3.example.com/api/v3
+paths:
+  /pet:
+    post:
+      tags: [pet]
+      summary: Add a new pet to the store
+      operationId: addPet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Pet" }
+      responses: { "200": { description: ok } }
+      security: [{ petstore_auth: [write:pets] }]
+    put:
+      tags: [pet]
+      summary: Update an existing pet
+      operationId: updatePet
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Pet" }
+      responses: { "200": { description: ok } }
+  /pet/findByStatus:
+    get:
+      tags: [pet]
+      summary: Finds Pets by status
+      operationId: findPetsByStatus
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [available, pending, sold], default: available }
+      responses: { "200": { description: ok } }
+  /pet/{petId}:
+    parameters:
+      - name: petId
+        in: path
+        required: true
+        description: ID of pet
+        schema: { type: integer, format: int64 }
+    get:
+      tags: [pet]
+      summary: Find pet by ID
+      operationId: getPetById
+      responses: { "200": { description: ok } }
+    delete:
+      tags: [pet]
+      summary: Deletes a pet
+      operationId: deletePet
+      parameters:
+        - name: api_key
+          in: header
+          schema: { type: string }
+      responses: { "400": { description: invalid } }
+  /store/inventory:
+    get:
+      tags: [store]
+      summary: Returns pet inventories by status
+      operationId: getInventory
+      responses: { "200": { description: ok } }
+      security: [{ api_key: [] }]
+components:
+  schemas:
+    Category:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        parent: { $ref: "#/components/schemas/Category" }
+    Pet:
+      type: object
+      required: [name, photoUrls]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string, example: doggie }
+        category: { $ref: "#/components/schemas/Category" }
+        photoUrls: { type: array, items: { type: string } }
+        status: { type: string, enum: [available, pending, sold] }
+  securitySchemes:
+    petstore_auth:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: https://petstore3.example.com/oauth/authorize
+          scopes: { "write:pets": modify pets, "read:pets": read pets }
+    api_key:
+      type: apiKey
+      name: api_key
+      in: header

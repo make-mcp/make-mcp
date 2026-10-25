@@ -1,0 +1,16 @@
+<%~ include("/_partials/about", it) %>
+
+## Build
+
+```bash
+npm install
+npm run build
+```
+
+<%~ include("/_partials/clients", it) %>
+
+## Regenerate
+
+```bash
+npx make-mcp create <%= it.target %>
+```
