@@ -31,6 +31,11 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:e2e
-      - run: npm publish -w @make-mcp/core
-      - run: npm publish -w @make-mcp/mcp-server
-      - run: npm publish -w @make-mcp/cli
+      # Skips versions that are already on npm, so a failed release can simply be re-run.
+      - name: Publish
+        run: |
+          for p in core mcp-server cli; do
+            v=$(node -p "require('./packages/$p/package.json').version")
+            if npm view "@make-mcp/$p@$v" version >/dev/null 2>&1; then echo "@make-mcp/$p@$v already published"; continue; fi
+            npm publish -w "@make-mcp/$p"
+          done
