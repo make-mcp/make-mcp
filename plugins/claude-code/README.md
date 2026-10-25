@@ -23,10 +23,12 @@ make-mcp runs locally; there is no make-mcp service, no account and no telemetry
 |---|---|
 | `registry.npmjs.org` | starting the MCP server via `npx`; package metadata (version, license, repository) of the target |
 | `pypi.org` | metadata of Python targets |
-| `api.github.com`, `raw.githubusercontent.com` | repository tags and docs of the target; community catalog entries (`github.com/make-mcp/catalog`) |
+| `api.github.com`, `raw.githubusercontent.com` | repository tags, docs and release notes (GitHub releases, CHANGELOG) of the target; community catalog entries (`github.com/make-mcp/catalog`) |
 | the target's own documentation site | `llms.txt`, `llms-full.txt`, OpenAPI spec or docs pages – respecting robots.txt and TDM reservations |
 
-Your project files are only read (package.json, lockfiles, pyproject.toml …) to detect the version. Files are written
+Your project files are only read (package.json, lockfiles, pyproject.toml …) to detect the versions, and – for
+`get_signature` – the installed packages' type declarations or Python stubs/sources in `node_modules` / `.venv`;
+nothing is executed. Files are written
 only to the output folder you confirm (default `mcp-servers/<name>-mcp`) and, after you approve the diff, to
 `.mcp.json` / `.cursor/mcp.json`. Generated servers are tested by installing their dependencies (`npm install` or
 `uv sync`). If an API has no OpenAPI spec, the extraction is done by Claude itself – no other model, no API key.
