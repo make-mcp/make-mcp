@@ -62,6 +62,12 @@ describe("make-mcp ui", () => {
     expect(Object.keys(unzipSync(new Uint8Array(await zip.arrayBuffer())))).toContain("daisyui-mcp/data/corpus.json");
   });
 
+  it("rejects answers that are not strings", async () => {
+    const detected = await (await api("detect", { target: "daisyUI" })).json();
+    const res = await api("answer", { sessionId: detected.sessionId, answers: { mode: 1 } });
+    expect(res.status).toBe(400);
+  });
+
   it("explains errors as JSON", async () => {
     const res = await api("preview", { sessionId: "unknown" });
     expect(res.status).toBe(422);

@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,5 +45,23 @@ describe.skipIf(!enabled)("make-mcp run", () => {
     expect(builds).toHaveLength(1);
     expect(builds[0]).toMatch(/^5\.7\.50-ts-/);
     expect(existsSync(join(cache, "servers", "daisyui", builds[0]!, "dist", "index.js"))).toBe(true);
+  });
+
+  it("survives parallel first starts of the same server", { timeout: 300_000 }, async () => {
+    const cache2 = mkdtempSync(join(tmpdir(), "make-mcp-run-par-"));
+    try {
+      const prepare = () =>
+        promisify(execFile)(
+          process.execPath,
+          [join(root, "packages/cli/dist/index.js"), "run", "daisyUI", "--prepare", "--fixtures", join(root, "fixtures/http"), "--workspace", join(root, "fixtures/workspaces/daisyui")],
+          { env: { ...process.env, MAKE_MCP_CACHE_DIR: cache2 } },
+        );
+      await Promise.all([prepare(), prepare(), prepare()]);
+      const entries = readdirSync(join(cache2, "servers", "daisyui"));
+      expect(entries).toHaveLength(1);
+      expect(existsSync(join(cache2, "servers", "daisyui", entries[0]!, "dist", "index.js"))).toBe(true);
+    } finally {
+      rmSync(cache2, { recursive: true, force: true });
+    }
   });
 });

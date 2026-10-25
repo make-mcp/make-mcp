@@ -9,9 +9,11 @@ import {
   finishExtraction,
   generateProject,
   GENERATOR_VERSION,
+  insideCache,
   MakeMcpError,
   resolveIntake,
   runExtraction,
+  splitResults,
   startExtraction,
   writeProject,
   type Fetchers,
@@ -38,11 +40,12 @@ export interface RunOptions {
 
 const log = (message: string) => process.stderr.write(`[make-mcp] ${message}\n`);
 
-function cachedManifest(dir: string): Manifest | undefined {
+function isBuilt(dir: string, language: "ts" | "py"): boolean {
   try {
-    return JSON.parse(readFileSync(join(dir, "data", "manifest.json"), "utf8")) as Manifest;
+    JSON.parse(readFileSync(join(dir, "data", "manifest.json"), "utf8")) as Manifest;
+    return existsSync(join(dir, language === "ts" ? "dist/index.js" : "server.py"));
   } catch {
-    return undefined;
+    return false;
   }
 }
 
@@ -50,10 +53,8 @@ function cachedManifest(dir: string): Manifest | undefined {
 export async function prepareServer(options: RunOptions): Promise<{ dir: string; language: "ts" | "py"; built: boolean }> {
   const findings = await detectContext({ target: options.target, workspaceRoot: options.workspace, ...options.fetchers });
   const resolved = resolveIntake(findings, catalogAnswers(findings, { transport: "stdio", register: "none" }), { useDefaults: true });
-  const dir = join(cacheRoot(), "servers", resolved.slug, `${resolved.version}-${resolved.language}-${GENERATOR_VERSION}`);
-  if (!options.refresh && cachedManifest(dir) && existsSync(join(dir, resolved.language === "ts" ? "dist/index.js" : "server.py"))) {
-    return { dir, language: resolved.language, built: false };
-  }
+  const dir = insideCache(join(cacheRoot(), "servers", resolved.slug, `${resolved.version}-${resolved.language}-${GENERATOR_VERSION}`));
+  if (!options.refresh && isBuilt(dir, resolved.language)) return { dir, language: resolved.language, built: false };
 
   log(`building ${resolved.target} ${resolved.version} MCP server (first run only) …`);
   const generateOptions: GenerateOptions = { ...options.fetchers, workspaceRoot: options.workspace };
@@ -66,24 +67,34 @@ export async function prepareServer(options: RunOptions): Promise<{ dir: string;
       );
     }
     const { corpus, plan } = await startExtraction(resolved, options.fetchers);
-    const { spec } = finishExtraction(resolved, corpus, await runExtraction(plan, llm));
-    Object.assign(generateOptions, { extractedApi: spec, corpus });
+    const { ok, failed } = splitResults(plan, await runExtraction(plan, llm));
+    // A cached build is reused forever, so never cache an API with missing parts.
+    if (failed.length) throw new MakeMcpError("SPEC_INVALID", `The model gave no valid answer for ${failed.length} of ${plan.tasks.length} batches; try again or use another model.`);
+    Object.assign(generateOptions, { extractedApi: finishExtraction(resolved, corpus, ok).spec, corpus });
   }
 
-  // Build next to the final directory and swap it in, so a crash never leaves a half-built cache entry.
-  const tmp = `${dir}.tmp-${process.pid}`;
-  rmSync(tmp, { recursive: true, force: true });
-  const project = await generateProject({ ...resolved, outDir: tmp }, generateOptions);
-  writeProject(project);
-  const tested = await testServer(tmp, options.fetchers);
-  if (!tested.ok) {
+  // Build next to the final directory and swap it in, so nobody ever sees a half-built cache entry.
+  const tmp = `${dir}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    const project = await generateProject({ ...resolved, outDir: tmp }, generateOptions);
+    writeProject(project);
+    const tested = await testServer(tmp, options.fetchers);
+    if (!tested.ok) throw new MakeMcpError("FETCH_FAILED", `The generated server failed its smoke test: ${tested.error ?? "no tools"}`);
+
+    // Another start may have finished first (several agent sessions launch the same plugin). Keep its build.
+    if (!options.refresh && isBuilt(dir, resolved.language)) return { dir, language: resolved.language, built: false };
+    if (options.refresh) rmSync(dir, { recursive: true, force: true });
+    try {
+      renameSync(tmp, dir);
+    } catch (err) {
+      if (isBuilt(dir, resolved.language)) return { dir, language: resolved.language, built: false };
+      throw err;
+    }
+    log(`ready: ${tested.tools.length} tools (${dir})`);
+    return { dir, language: resolved.language, built: true };
+  } finally {
     rmSync(tmp, { recursive: true, force: true });
-    throw new MakeMcpError("FETCH_FAILED", `The generated server failed its smoke test: ${tested.error ?? "no tools"}`);
   }
-  rmSync(dir, { recursive: true, force: true });
-  renameSync(tmp, dir);
-  log(`ready: ${tested.tools.length} tools (${dir})`);
-  return { dir, language: resolved.language, built: true };
 }
 
 /** Runs the prepared server with this process's stdio; resolves with its exit code. */
@@ -96,5 +107,11 @@ export async function runServer(options: RunOptions): Promise<number> {
   const forward = (signal: NodeJS.Signals) => () => child.kill(signal);
   process.on("SIGINT", forward("SIGINT"));
   process.on("SIGTERM", forward("SIGTERM"));
-  return new Promise((resolve) => child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0))));
+  return new Promise((resolve) => {
+    child.on("error", (err) => {
+      log(language === "py" ? `could not start the Python server (is uv installed?): ${err.message}` : `could not start the server: ${err.message}`);
+      resolve(127);
+    });
+    child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+  });
 }

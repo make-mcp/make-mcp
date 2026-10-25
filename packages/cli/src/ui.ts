@@ -79,13 +79,23 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
   const token = options.token ?? randomBytes(24).toString("hex");
   const sessions = new IntakeSessions(options.fetchers, options.workspace);
   const llm = createLlmFromEnv();
-  const tokenOk = (value: string | null | undefined) =>
-    typeof value === "string" && value.length === token.length && timingSafeEqual(Buffer.from(value), Buffer.from(token));
+  const expected = Buffer.from(token);
+  const tokenOk = (value: string | null | undefined) => {
+    if (typeof value !== "string") return false;
+    const given = Buffer.from(value);
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  };
 
   const api: Record<string, (body: Record<string, unknown>) => unknown> = {
     info: () => ({ version: SERVER_VERSION, workspace: options.workspace, llm: llm?.label ?? null, container: options.container ?? false }),
     detect: (b) => sessions.detect(str(b, "target")),
-    answer: (b) => sessions.answer(str(b, "sessionId"), (b.answers ?? {}) as Record<string, string>),
+    answer: (b) => {
+      const answers = b.answers ?? {};
+      if (typeof answers !== "object" || Array.isArray(answers) || Object.values(answers).some((v) => typeof v !== "string")) {
+        throw new HttpError(400, "answers must map question ids to strings");
+      }
+      return sessions.answer(str(b, "sessionId"), answers as Record<string, string>);
+    },
     preview: (b) => sessions.preview(str(b, "sessionId")),
     extract: (b) => {
       if (!llm) throw new HttpError(409, "No LLM configured. Set ANTHROPIC_API_KEY, or MAKE_MCP_LLM_BASE_URL + MAKE_MCP_LLM_MODEL, and restart make-mcp ui.");
@@ -132,7 +142,12 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
   });
 
   const host = options.host ?? "127.0.0.1";
-  await new Promise<void>((resolve) => server.listen(options.port ?? 4321, host, resolve));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", (err: NodeJS.ErrnoException) =>
+      reject(err.code === "EADDRINUSE" ? new Error(`Port ${options.port ?? 4321} is in use – choose another with --port.`) : err),
+    );
+    server.listen(options.port ?? 4321, host, resolve);
+  });
   const { port } = server.address() as AddressInfo;
   const shownHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
   return {

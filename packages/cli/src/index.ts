@@ -20,6 +20,7 @@ import {
   refreshDocs,
   resolveIntake,
   runExtraction,
+  splitResults,
   startExtraction,
   summarizeIntake,
   writeProject,
@@ -175,8 +176,9 @@ async function extractApi(resolved: ResolvedIntake, fetchers: Fetchers, interact
   out(`${pages} of ${corpus.pages.length} pages look like API reference (${plan.tasks.length} batch${plan.tasks.length === 1 ? "" : "es"}).`);
   if (interactive && !(await confirmStep(`Send them to ${llm.label} to extract the operations?`))) return undefined;
 
-  const results = await runExtraction(plan, llm, { onTask: (i, total) => out(`  extracting batch ${i + 1}/${total} …`) });
-  const { spec, validated } = finishExtraction(resolved, corpus, results);
+  const { ok, failed } = splitResults(plan, await runExtraction(plan, llm, { onTask: (i, total) => out(`  extracting batch ${i + 1}/${total} …`) }));
+  if (failed.length) out(`  warning: no valid answer for ${failed.length} of ${plan.tasks.length} batches (${failed.join(", ")}) – those pages are missing.`);
+  const { spec, validated } = finishExtraction(resolved, corpus, ok);
   out(`\nExtracted ${spec.endpoints.length} operations (checked against the documentation):`);
   spec.endpoints.forEach((e) => out(`  ${e.method.toUpperCase().padEnd(6)} ${e.path} – ${e.summary ?? e.id}`));
   if (validated.rejected.length) {

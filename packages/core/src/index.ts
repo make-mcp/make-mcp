@@ -53,7 +53,7 @@ export {
   type ValidatedExtraction,
   type Rejection,
 } from "./extract/prose-api.js";
-export { createLlmFromEnv, anthropicClient, openAiCompatibleClient, runExtraction, DEFAULT_ANTHROPIC_MODEL, type LlmClient } from "./extract/llm.js";
+export { createLlmFromEnv, anthropicClient, openAiCompatibleClient, runExtraction, splitResults, DEFAULT_ANTHROPIC_MODEL, type LlmClient } from "./extract/llm.js";
 export { planRegistration, applyRegistration, type AgentClient, type RegisterInput, type RegistrationPlan } from "./generate/register.js";
 export {
   CATALOG_URL,

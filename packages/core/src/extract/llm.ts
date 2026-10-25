@@ -1,6 +1,18 @@
 import { MakeMcpError } from "../errors.js";
 import { ExtractionResultSchema, parseModelJson, renderTask, type ExtractionPlan, type ExtractionResult } from "./prose-api.js";
 
+/** Results of the batches that succeeded, plus the ids of those that did not. */
+export function splitResults(plan: ExtractionPlan, results: (ExtractionResult | undefined)[]): { ok: ExtractionResult[]; failed: string[] } {
+  const ok: ExtractionResult[] = [];
+  const failed: string[] = [];
+  plan.tasks.forEach((task, i) => {
+    const result = results[i];
+    if (result) ok.push(result);
+    else failed.push(task.id);
+  });
+  return { ok, failed };
+}
+
 /**
  * Minimal LLM client for the CLI when no coding agent is involved. In agent mode the agent's own
  * model does the extraction and this module is not used. Bring your own key or a local model:
@@ -81,19 +93,23 @@ export interface RunExtractionOptions {
   onTask?: (index: number, total: number) => void;
 }
 
-/** Runs every task through the model; malformed answers get one retry with the validation error. */
-export async function runExtraction(plan: ExtractionPlan, llm: LlmClient, options: RunExtractionOptions = {}): Promise<ExtractionResult[]> {
-  const results: ExtractionResult[] = [];
+/**
+ * Runs every task through the model; malformed answers get one retry with the validation error.
+ * The result is aligned with `plan.tasks`: `undefined` marks a batch the model could not answer validly.
+ */
+export async function runExtraction(plan: ExtractionPlan, llm: LlmClient, options: RunExtractionOptions = {}): Promise<(ExtractionResult | undefined)[]> {
+  const results: (ExtractionResult | undefined)[] = [];
   for (const [index, task] of plan.tasks.entries()) {
     options.onTask?.(index, plan.tasks.length);
     const user = renderTask(task);
     let feedback = "";
+    let result: ExtractionResult | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       const answer = await llm.complete({ system: SYSTEM, user: feedback ? `${user}\n\nYour previous answer was invalid: ${feedback}\nAnswer again with valid JSON only.` : user });
       try {
         const parsed = ExtractionResultSchema.safeParse(parseModelJson(answer));
         if (parsed.success) {
-          results.push(parsed.data);
+          result = parsed.data;
           break;
         }
         feedback = parsed.error.issues
@@ -104,6 +120,7 @@ export async function runExtraction(plan: ExtractionPlan, llm: LlmClient, option
         feedback = `not JSON (${(err as Error).message})`;
       }
     }
+    results.push(result);
   }
   return results;
 }

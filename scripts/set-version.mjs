@@ -33,19 +33,21 @@ const edits = [
   ["plugins/claude-code/.mcp.json", [[new RegExp(`(@make-mcp/cli@)${v}`), `$1${version}`]]],
 ];
 
-let stale = 0;
-for (const [file, rules] of edits) {
+// Compute every edit first, so a missing pattern never leaves a half-updated set of files.
+const changes = edits.map(([file, rules]) => {
   const before = readFileSync(file, "utf8");
   let after = before;
   for (const [pattern, replacement] of rules) {
     if (!pattern.test(after)) throw new Error(`${file}: pattern ${pattern} not found`);
     after = after.replace(pattern, replacement);
   }
-  if (after === before) continue;
-  stale++;
-  if (check) warn(`${file} does not pin ${version}`);
-  else writeFileSync(file, after);
+  return { file, before, after };
+});
+const stale = changes.filter((c) => c.after !== c.before);
+for (const c of stale) {
+  if (check) warn(`${c.file} does not pin ${version}`);
+  else writeFileSync(c.file, c.after);
 }
 
-if (check && stale) process.exit(1);
-log(check ? `all files pin ${version}` : `set ${version} in ${stale} file(s); run npm install to update the lockfile`);
+if (check && stale.length) process.exit(1);
+log(check ? `all files pin ${version}` : `set ${version} in ${stale.length} file(s); run npm install to update the lockfile`);

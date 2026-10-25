@@ -13,7 +13,7 @@ import { finishExtraction, generateProject, startExtraction, writeProject } from
 import { nextQuestions } from "../intake/questions.js";
 import { resolveIntake } from "../intake/resolve.js";
 import type { DocCorpus } from "../ir/index.js";
-import { createLlmFromEnv, runExtraction, type LlmClient } from "./llm.js";
+import { createLlmFromEnv, runExtraction, splitResults, type LlmClient } from "./llm.js";
 import { canonicalPath, parseModelJson, planExtraction, validateExtraction, type ExtractionResult } from "./prose-api.js";
 
 const fixtures = (path: string) => fileURLToPath(new URL(`../../../../fixtures/${path}`, import.meta.url));
@@ -263,3 +263,26 @@ describe("validation guards against steering and invented details", () => {
     expect(validateExtraction([{ auth: { type: "apiKey", name: "X-Api-Key" }, operations: [] }], corpus).auth?.name).toBe("X-Api-Key");
   });
 });
+
+describe("runExtraction", () => {
+  it("keeps results aligned with their batches when one batch fails", async () => {
+    const page = (path: string) => ({ path, title: path, kind: "page" as const, markdown: `GET /${path} returns it.\n${"x".repeat(900)}`, sourceUrl: "https://x/" });
+    const plan = planExtraction({ title: "t", pages: [page("a"), page("b"), page("c")], sources: [] }, { maxCharsPerTask: 1000 });
+    expect(plan.tasks.map((t) => t.id)).toEqual(["t1", "t2", "t3"]);
+    let call = 0;
+    const llm: LlmClient = {
+      label: "flaky",
+      async complete({ user }) {
+        call++;
+        // The second batch never yields valid JSON, even on retry.
+        if (user.includes("=== page: b ")) return "sorry, no idea";
+        return JSON.stringify({ operations: [{ method: "get", path: `/${user.includes("=== page: a ") ? "a" : "c"}`, summary: "Get it", source: { page: "x", quote: "returns it." } }] });
+      },
+    };
+    const results = await runExtraction(plan, llm);
+    expect(results.map((r) => r?.operations[0]?.path)).toEqual(["/a", undefined, "/c"]);
+    expect(splitResults(plan, results).failed).toEqual(["t2"]);
+    expect(call).toBe(4);
+  });
+});
+

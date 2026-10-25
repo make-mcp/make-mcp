@@ -43,6 +43,9 @@ import { testServer, type ServerTestResult } from "./test-server.js";
 
 interface Session {
   id: string;
+  createdAt: number;
+  /** In-flight extraction start, so concurrent calls share one corpus download. */
+  extracting?: Promise<NonNullable<Session["extraction"]>>;
   findings: Findings;
   answers: IntakeAnswers;
   resolved?: ResolvedIntake;
@@ -123,6 +126,9 @@ export interface GenerateResult {
   warnings: string[];
 }
 
+/** Sessions hold a whole doc corpus; a long-running UI keeps at most this many. */
+const MAX_SESSIONS = 20;
+
 export class IntakeSessions {
   private readonly sessions = new Map<string, Session>();
   private readonly fetchers: Fetchers;
@@ -145,17 +151,23 @@ export class IntakeSessions {
 
   async detect(target: string, workspace?: string): Promise<DetectResult> {
     const findings = await detectContext({ target, workspaceRoot: workspace ?? this.defaultWorkspace ?? process.cwd(), ...this.fetchers });
-    const s: Session = { id: randomUUID(), findings, answers: catalogAnswers(findings, {}) };
+    const s: Session = { id: randomUUID(), createdAt: Date.now(), findings, answers: catalogAnswers(findings, {}) };
     this.sessions.set(s.id, s);
+    // Maps keep insertion order: drop the oldest sessions first.
+    for (const id of [...this.sessions.keys()].slice(0, Math.max(0, this.sessions.size - MAX_SESSIONS))) this.sessions.delete(id);
     return { sessionId: s.id, findings: findingsView(findings), questions: nextQuestions(findings, s.answers) };
   }
 
   async answer(sessionId: string, raw: Record<string, string>): Promise<AnswerResult> {
     const s = this.get(sessionId);
-    s.answers = normalizeAnswers(s.findings, s.answers, raw);
-    if (raw.docsSource || raw.codeSource) s.findings = await applySourceAnswers(s.findings, s.answers, this.fetchers);
+    const answers = normalizeAnswers(s.findings, s.answers, raw);
+    const findings = raw.docsSource || raw.codeSource ? await applySourceAnswers(s.findings, answers, this.fetchers) : s.findings;
+    // Commit only after everything succeeded, and drop all state derived from the old answers.
+    s.answers = answers;
+    s.findings = findings;
     s.resolved = undefined;
     s.extraction = undefined;
+    s.extracting = undefined;
     s.project = undefined;
     const questions = nextQuestions(s.findings, s.answers);
     return { answers: s.answers, questions, ready: questions.length === 0, notes: s.findings.notes };
@@ -170,15 +182,18 @@ export class IntakeSessions {
   private async ensureExtraction(s: Session): Promise<NonNullable<Session["extraction"]>> {
     const resolved = this.resolved(s);
     if (resolved.apiSource !== "docs") throw new MakeMcpError("INTAKE_INCOMPLETE", "This target has an OpenAPI spec; no extraction needed.");
-    if (!s.extraction) {
-      const { corpus, plan } = await startExtraction(resolved, this.fetchers);
-      s.extraction = { corpus, plan, results: new Map() };
-    }
-    return s.extraction;
+    if (s.extraction) return s.extraction;
+    s.extracting ??= startExtraction(resolved, this.fetchers).then(
+      ({ corpus, plan }) => (s.extraction = { corpus, plan, results: new Map() }),
+      (err: unknown) => {
+        s.extracting = undefined;
+        throw err;
+      },
+    );
+    return s.extracting;
   }
 
-  private summary(s: Session): ExtractionSummary {
-    const extraction = s.extraction!;
+  private summary(s: Session, extraction: NonNullable<Session["extraction"]>): ExtractionSummary {
     const { spec, validated } = finishExtraction(this.resolved(s), extraction.corpus, [...extraction.results.values()]);
     extraction.spec = spec;
     return {
@@ -198,7 +213,7 @@ export class IntakeSessions {
     const task = taskId ? plan.tasks.find((t) => t.id === taskId) : plan.tasks.find((t) => !results.has(t.id));
     if (!task) {
       if (taskId) throw new MakeMcpError("INTAKE_INCOMPLETE", `Unknown taskId ${taskId}`);
-      return { done: true as const, ...this.summary(s) };
+      return { done: true as const, ...this.summary(s, s.extraction!) };
     }
     return {
       done: false as const,
@@ -225,19 +240,27 @@ export class IntakeSessions {
     }
     s.extraction.results.set(taskId, parsed.data);
     s.project = undefined;
-    return this.summary(s);
+    return this.summary(s, s.extraction);
   }
 
   /** Runs all batches through a configured model (web UI and CLI, where no agent is involved). */
-  async extractWithLlm(sessionId: string, llm: LlmClient, onTask?: (index: number, total: number) => void): Promise<ExtractionSummary & { pages: number }> {
+  async extractWithLlm(
+    sessionId: string,
+    llm: LlmClient,
+    onTask?: (index: number, total: number) => void,
+  ): Promise<ExtractionSummary & { pages: number; failedTasks: string[] }> {
     const s = this.get(sessionId);
     const extraction = await this.ensureExtraction(s);
     const results = await runExtraction(extraction.plan, llm, onTask ? { onTask } : {});
+    const failedTasks: string[] = [];
     extraction.plan.tasks.forEach((t, i) => {
       const result = results[i];
       if (result) extraction.results.set(t.id, result);
+      else failedTasks.push(t.id);
     });
-    return { ...this.summary(s), pages: extraction.plan.tasks.reduce((n, t) => n + t.pages.length, 0) };
+    // The answers may have changed while the model was working; then this extraction is stale.
+    if (s.extraction !== extraction) throw new MakeMcpError("INTAKE_INCOMPLETE", "The answers changed during the extraction; start it again.");
+    return { ...this.summary(s, extraction), pages: extraction.plan.tasks.reduce((n, t) => n + t.pages.length, 0), failedTasks };
   }
 
   async generate(sessionId: string, options: { zip?: boolean; outDir?: string } = {}): Promise<GenerateResult> {
