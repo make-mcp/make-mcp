@@ -30,6 +30,7 @@ import {
   type ResolvedIntake,
 } from "@make-mcp/core";
 import { SERVER_VERSION, startStdioServer, testServer } from "@make-mcp/mcp-server";
+import { startUi } from "./ui.js";
 
 const HELP = `make-mcp ${SERVER_VERSION} – generate MCP servers from docs, specs or source code
 
@@ -39,6 +40,7 @@ Usage:
   make-mcp create [target]          Interactive: detect, ask, generate, test, register
   make-mcp generate --target <t>    Non-interactive (use --yes to accept defaults)
   make-mcp mcp                      Run make-mcp as an MCP server (stdio) for coding agents
+  make-mcp ui                       Local web UI (127.0.0.1:4321; --port, --host, --workspace)
   make-mcp refresh <dir>            Download docs for a server that fetches them on install
   make-mcp test <dir>               Install, build and smoke-test a generated server
 
@@ -81,6 +83,8 @@ const { positionals, values } = parseArgs({
     "allow-private": { type: "boolean", default: false },
     "if-missing": { type: "boolean", default: false },
     fixtures: { type: "string" },
+    port: { type: "string" },
+    host: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -231,6 +235,18 @@ async function main(): Promise<void> {
       return generate(false);
     case "mcp":
       return startStdioServer();
+    case "ui": {
+      const ui = await startUi({
+        fetchers: createFetchers({ allowPrivateNetworks: values["allow-private"], ...(values.fixtures ? { fixturesDir: values.fixtures } : {}) }),
+        workspace: resolve(values.workspace ?? process.cwd()),
+        ...(values.host ? { host: values.host } : {}),
+        ...(values.port ? { port: Number(values.port) } : {}),
+        container: process.env.MAKE_MCP_CONTAINER === "1",
+      });
+      out(`make-mcp UI: ${ui.url}`);
+      out("(the link contains an access token; stop with Ctrl+C)");
+      return;
+    }
     case "refresh": {
       const dir = resolve(positionals[1] ?? ".");
       const result = await refreshDocs(dir, { ...createFetchers({ allowPrivateNetworks: values["allow-private"] }), ifMissing: values["if-missing"] });

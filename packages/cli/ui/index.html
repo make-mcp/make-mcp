@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>make-mcp</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23141413'/%3E%3Ctext x='16' y='23' text-anchor='middle' font-family='monospace' font-size='20' fill='%23d97757'%3E%E2%9C%BB%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #141413; --bg-2: #1c1b19; --bg-3: #262522; --line: #3a3833;
+  --fg: #f0eee6; --muted: #a8a49a; --dim: #75716a;
+  --accent: #d97757; --accent-2: #e8a184; --ok: #8fbf7f; --err: #e5786d; --blue: #8fb3d9;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.6 var(--mono); }
+a { color: var(--accent-2); }
+.wrap { max-width: 860px; margin: 0 auto; padding: 0 16px 80px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 0; border-bottom: 1px solid var(--bg-3); margin-bottom: 24px; flex-wrap: wrap; }
+.brand { font-weight: 700; }
+.star { color: var(--accent); }
+.meta { color: var(--dim); font-size: 12px; }
+h2 { font-size: 15px; margin: 28px 0 12px; }
+h2::before { content: "## "; color: var(--accent); }
+.card { background: var(--bg-2); border: 1px solid var(--bg-3); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+input[type=text] { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+button { font: inherit; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--bg-3); color: var(--fg); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 700; }
+button:disabled { opacity: .5; cursor: progress; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 18px; margin: 0; }
+dt { color: var(--dim); }
+dd { margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
+fieldset { border: 0; padding: 0; margin: 0 0 18px; }
+legend { font-weight: 700; margin-bottom: 8px; }
+label.opt { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+label.opt:hover { background: var(--bg-3); }
+label.opt input[type=radio] { accent-color: var(--accent); margin-top: 5px; }
+.desc { color: var(--dim); font-size: 12px; display: block; }
+pre { margin: 0 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
+.note { color: var(--accent-2); }
+.ok { color: var(--ok); }
+.err { color: var(--err); }
+.dim { color: var(--dim); }
+ul.plain { list-style: none; padding: 0; margin: 0 0 12px; }
+ul.plain li { padding: 2px 0; }
+.tools span { display: inline-block; color: var(--blue); border: 1px solid var(--bg-3); border-radius: 4px; padding: 0 8px; margin: 0 6px 6px 0; font-size: 12px; }
+#error { display: none; border-color: var(--err); }
+[hidden] { display: none !important; }
+@media (max-width: 560px) { dl { grid-template-columns: 1fr; } dt { margin-top: 6px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="brand"><span class="star">✻</span> make-mcp</span>
+    <span class="meta" id="meta"></span>
+  </header>
+
+  <div class="card" id="error" role="alert"><pre class="err" id="error-text"></pre></div>
+
+  <section id="step-target">
+    <h2>target</h2>
+    <form class="card row" id="target-form">
+      <input type="text" id="target" placeholder="daisyui · fastapi · https://api.example.com/openapi.json" autocomplete="off" required aria-label="Library, product or URL">
+      <button class="primary" type="submit">Detect</button>
+    </form>
+  </section>
+
+  <section id="step-findings" hidden>
+    <h2>detected</h2>
+    <div class="card"><dl id="findings"></dl></div>
+  </section>
+
+  <section id="step-questions" hidden>
+    <h2>questions</h2>
+    <form class="card" id="questions-form">
+      <div id="questions"></div>
+      <button class="primary" type="submit">Continue</button>
+    </form>
+  </section>
+
+  <section id="step-plan" hidden>
+    <h2>plan</h2>
+    <div class="card">
+      <pre id="summary"></pre>
+      <p class="note" id="extract-hint" hidden></p>
+      <div class="row"><button class="primary" id="plan-go" type="button">Generate</button></div>
+    </div>
+  </section>
+
+  <section id="step-extracted" hidden>
+    <h2>extracted operations</h2>
+    <div class="card">
+      <ul class="plain" id="accepted"></ul>
+      <div id="rejected-box" hidden><p class="dim">Rejected – not backed by the documentation:</p><ul class="plain err" id="rejected"></ul></div>
+      <p class="dim" id="extract-meta"></p>
+      <div class="row"><button class="primary" id="extract-go" type="button">Generate with these operations</button></div>
+    </div>
+  </section>
+
+  <section id="step-result" hidden>
+    <h2>generated</h2>
+    <div class="card">
+      <dl id="result"></dl>
+      <p class="tools" id="tools"></p>
+      <ul class="plain note" id="warnings"></ul>
+      <div class="row">
+        <a id="zip" download><button type="button" tabindex="-1">Download ZIP</button></a>
+        <button type="button" id="test-go">Install &amp; smoke-test</button>
+        <button type="button" id="register-go">Register in project…</button>
+        <button type="button" id="restart">Start over</button>
+      </div>
+      <pre id="test-result" class="dim"></pre>
+    </div>
+    <div class="card" id="register-box" hidden>
+      <p id="register-text"></p>
+      <pre id="register-diff"></pre>
+      <div class="row" id="register-actions"><button class="primary" type="button" id="register-apply">Write it</button></div>
+    </div>
+  </section>
+</div>
+
+<script>
+"use strict";
+const token = new URLSearchParams(location.hash.slice(1)).get("t") || "";
+const $ = (id) => document.getElementById(id);
+const STEPS = ["step-findings", "step-questions", "step-plan", "step-extracted", "step-result"];
+let session = "";
+let info = {};
+
+function el(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+
+function showError(message) {
+  $("error").style.display = message ? "block" : "none";
+  $("error-text").textContent = message || "";
+}
+
+async function call(name, body = {}) {
+  const res = await fetch(`/api/${name}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-make-mcp-token": token },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({ message: `HTTP ${res.status}` }));
+  if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+async function busy(button, label, work) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  showError("");
+  try {
+    return await work();
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function reveal(id) {
+  $(id).hidden = false;
+  $(id).scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderFindings(f) {
+  const rows = [
+    ["target", f.target],
+    ["package", f.package],
+    ["version", f.version && `${f.version.value} (${f.version.source})`],
+    ["license", f.license],
+    ["repository", f.repository && `${f.repository}${f.repoTag ? ` @ ${f.repoTag}` : ""}`],
+    ["docs", f.docsSources.join("\n")],
+    ["openapi", f.openapi && `${f.openapi.url} (${f.openapi.endpointCount} operations)`],
+    ["notes", f.notes.join("\n")],
+  ];
+  $("findings").replaceChildren(...rows.filter(([, v]) => v).flatMap(([k, v]) => [el("dt", k), el("dd", v)]));
+}
+
+function renderQuestions(questions) {
+  const box = $("questions");
+  box.replaceChildren();
+  for (const q of questions) {
+    const fieldset = el("fieldset");
+    fieldset.dataset.id = q.id;
+    fieldset.append(el("legend", q.question));
+    const options = [...q.options].sort((a, b) => (b.value === q.default) - (a.value === q.default));
+    options.forEach((o, i) => {
+      const label = el("label", undefined, "opt");
+      const input = el("input");
+      input.type = "radio";
+      input.name = q.id;
+      input.value = o.value;
+      input.checked = o.value === q.default || (q.default === undefined && i === 0);
+      const text = el("span", o.label + (o.value === q.default ? "  (recommended)" : ""));
+      if (o.description) text.append(el("span", o.description, "desc"));
+      label.append(input, text);
+      fieldset.append(label);
+    });
+    if (q.allowFreeText) {
+      const label = el("label", undefined, "opt");
+      const input = el("input");
+      input.type = "radio";
+      input.name = q.id;
+      input.value = "__other";
+      const free = el("input");
+      free.type = "text";
+      free.placeholder = "Other: URL, path or version";
+      free.setAttribute("aria-label", `${q.question} – other`);
+      free.addEventListener("focus", () => (input.checked = true));
+      label.append(input, free);
+      fieldset.append(label);
+    }
+    box.append(fieldset);
+  }
+}
+
+function collectAnswers() {
+  const answers = {};
+  for (const fieldset of $("questions").querySelectorAll("fieldset")) {
+    const checked = fieldset.querySelector("input[type=radio]:checked");
+    if (!checked) continue;
+    answers[fieldset.dataset.id] = checked.value === "__other" ? fieldset.querySelector("input[type=text]").value.trim() : checked.value;
+  }
+  return answers;
+}
+
+async function showPlan() {
+  const plan = await call("preview", { sessionId: session });
+  $("summary").textContent = plan.summary;
+  const go = $("plan-go");
+  go.dataset.extract = plan.needsExtraction ? "1" : "";
+  go.textContent = plan.needsExtraction ? "Extract the API" : "Generate";
+  go.disabled = plan.needsExtraction && !info.llm;
+  $("extract-hint").hidden = !plan.needsExtraction;
+  $("extract-hint").textContent = info.llm
+    ? `No OpenAPI spec: ${info.llm} extracts the operations from the documentation; each one is checked against its source page.`
+    : "No OpenAPI spec and no LLM configured. Set ANTHROPIC_API_KEY (or MAKE_MCP_LLM_BASE_URL + MAKE_MCP_LLM_MODEL for Ollama & co.) and restart – or use make-mcp inside your coding agent, where its own model does this.";
+  reveal("step-plan");
+}
+
+async function generate() {
+  const r = await call("generate", { sessionId: session });
+  const rows = [
+    ["folder", r.outDir],
+    ["docs pages", r.docPages || ""],
+    ["operations", r.endpoints || ""],
+    ["docs", r.contentMode && (r.contentMode === "embedded" ? "embedded" : "downloaded on install (license)")],
+    ["env vars", r.envVars.map((v) => `${v.name} – ${v.description}`).join("\n")],
+  ];
+  $("result").replaceChildren(...rows.filter(([, v]) => v).flatMap(([k, v]) => [el("dt", k), el("dd", String(v))]));
+  $("tools").replaceChildren(...r.tools.map((t) => el("span", t)));
+  $("warnings").replaceChildren(...r.warnings.map((w) => el("li", `! ${w}`)));
+  $("zip").href = `/api/zip?session=${encodeURIComponent(session)}&t=${encodeURIComponent(token)}`;
+  $("register-go").hidden = Boolean(info.container);
+  $("test-result").textContent = "";
+  $("register-box").hidden = true;
+  reveal("step-result");
+}
+
+$("target-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  busy(event.submitter, "Detecting…", async () => {
+    STEPS.forEach((id) => ($(id).hidden = true));
+    const result = await call("detect", { target: $("target").value.trim() });
+    session = result.sessionId;
+    renderFindings(result.findings);
+    reveal("step-findings");
+    if (result.questions.length) {
+      renderQuestions(result.questions);
+      reveal("step-questions");
+    } else await showPlan();
+  });
+});
+
+$("questions-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  busy(event.submitter, "Saving…", async () => {
+    const result = await call("answer", { sessionId: session, answers: collectAnswers() });
+    if (!result.ready) return renderQuestions(result.questions);
+    $("step-questions").hidden = true;
+    await showPlan();
+  });
+});
+
+$("plan-go").addEventListener("click", (event) => {
+  const extract = event.currentTarget.dataset.extract === "1";
+  busy(event.currentTarget, extract ? "Extracting… (can take a minute)" : "Generating…", async () => {
+    if (!extract) return generate();
+    const r = await call("extract", { sessionId: session });
+    $("accepted").replaceChildren(...r.accepted.map((a) => el("li", `✓ ${a}`, "ok")));
+    $("rejected").replaceChildren(...r.rejected.map((x) => el("li", `✗ ${x.method} ${x.path} – ${x.reason}`)));
+    $("rejected-box").hidden = r.rejected.length === 0;
+    $("extract-meta").textContent = `${r.pages} pages read · base URL ${r.baseUrl} · auth ${r.auth.join(", ") || "none"}`;
+    $("extract-go").disabled = r.accepted.length === 0;
+    reveal("step-extracted");
+  });
+});
+
+$("extract-go").addEventListener("click", (event) => busy(event.currentTarget, "Generating…", generate));
+
+$("test-go").addEventListener("click", (event) =>
+  busy(event.currentTarget, "Testing… (installs dependencies)", async () => {
+    const r = await call("test", { sessionId: session });
+    $("test-result").className = r.ok ? "ok" : "err";
+    $("test-result").textContent = r.ok ? `✓ ${r.tools.length} tools respond (${r.steps.join(" → ")})` : `✗ ${r.error || "no tools"}`;
+  }),
+);
+
+$("register-go").addEventListener("click", (event) =>
+  busy(event.currentTarget, "…", async () => {
+    const plan = await call("register", { sessionId: session, apply: false });
+    $("register-text").textContent = plan.command ? "Run this command to register it globally:" : `${plan.replacesExisting ? "Update" : "Add"} the server in ${plan.file}:`;
+    $("register-diff").textContent = plan.command || plan.after;
+    $("register-actions").hidden = !plan.file;
+    reveal("register-box");
+  }),
+);
+
+$("register-apply").addEventListener("click", (event) =>
+  busy(event.currentTarget, "Writing…", async () => {
+    const r = await call("register", { sessionId: session, apply: true });
+    $("register-text").textContent = `✓ Written to ${r.file}.` + (r.envVars.length ? ` Set: ${r.envVars.map((v) => v.name).join(", ")}` : "");
+    $("register-actions").hidden = true;
+  }),
+);
+
+$("restart").addEventListener("click", () => {
+  STEPS.forEach((id) => ($(id).hidden = true));
+  $("target").value = "";
+  $("target").focus();
+  scrollTo({ top: 0, behavior: "smooth" });
+});
+
+call("info")
+  .then((i) => {
+    info = i;
+    $("meta").textContent = `v${i.version} · ${i.container ? "container" : i.workspace} · LLM ${i.llm || "none"}`;
+    $("target").focus();
+  })
+  .catch(() => showError("Open the full URL printed by `make-mcp ui` – it contains the access token."));
+</script>
+</body>
+</html>

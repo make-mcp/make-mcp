@@ -3,6 +3,7 @@ import { createMakeMcpServer, type ServerOptions } from "./server.js";
 
 export { createMakeMcpServer, SERVER_VERSION, type ServerOptions } from "./server.js";
 export { testServer, type ServerTestResult, type TestServerOptions } from "./test-server.js";
+export { IntakeSessions, findingsView, type FindingsView, type DetectResult, type AnswerResult, type PreviewResult, type ExtractionSummary, type GenerateResult } from "./sessions.js";
 
 export async function startStdioServer(options: ServerOptions = {}): Promise<void> {
   await createMakeMcpServer(options).connect(new StdioServerTransport());
