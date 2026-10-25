@@ -148,13 +148,6 @@ npm run build
 claude mcp add make-mcp-dev -- node "$PWD/packages/cli/dist/index.js" mcp
 ```
 
-## Roadmap
-
-- ~~M2: LLM-assisted API extraction from prose docs, grouping for large APIs, Python workspace detection~~ ✓
-- ~~M3: local web UI and Docker image~~ ✓
-- ~~M4: Cloud Run deploy templates (Skaffold/Cloud Code)~~ ✓
-- ~~M5: community catalog of generator configs~~ ✓
-
 ## License
 
 Apache-2.0
