@@ -1,6 +1,6 @@
 {
   "name": "@make-mcp/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generate MCP servers from API specs, documentation or source code",
   "license": "Apache-2.0",
   "type": "module",
@@ -11,8 +11,8 @@
     "dist"
   ],
   "dependencies": {
-    "@make-mcp/core": "0.1.0",
-    "@make-mcp/mcp-server": "0.1.0",
+    "@make-mcp/core": "0.2.0",
+    "@make-mcp/mcp-server": "0.2.0",
     "@inquirer/prompts": "8.7.4"
   },
   "publishConfig": {

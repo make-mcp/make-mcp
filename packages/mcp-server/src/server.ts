@@ -37,7 +37,7 @@ import pino from "pino";
 import { z } from "zod";
 import { testServer } from "./test-server.js";
 
-export const SERVER_VERSION = "0.1.0";
+export const SERVER_VERSION = "0.2.0";
 const log = pino({ name: "make-mcp", level: process.env.LOG_LEVEL ?? "info" }, pino.destination(2));
 
 interface Session {
