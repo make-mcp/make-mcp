@@ -2,9 +2,21 @@
   "name": "make-mcp",
   "version": "0.4.1",
   "description": "Generate MCP servers for any library, product or API from its docs, llms.txt, OpenAPI spec or source code – version-exact, offline-capable, no API key needed.",
-  "author": { "name": "make-mcp contributors" },
+  "author": {
+    "name": "Sven Reichert",
+    "email": "support@make-mcp.net",
+    "url": "https://make-mcp.net"
+  },
   "homepage": "https://make-mcp.net",
   "repository": "https://github.com/make-mcp/make-mcp",
   "license": "Apache-2.0",
-  "keywords": ["mcp", "generator", "openapi", "documentation", "llms.txt"]
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "generator",
+    "documentation",
+    "llms.txt",
+    "openapi",
+    "developer-tools"
+  ]
 }
