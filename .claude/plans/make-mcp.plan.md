@@ -74,7 +74,7 @@ Regeln: Felder mit hoher Erkennungssicherheit werden nur in der Abschlusszusamme
 | M2 | LLM-Extraktion Markdown-API-Docs, Gruppierung großer APIs, Python-Templates vollständig, Python-Workspace-Detection | done | dieses Dokument (Abweichungen unten) |
 | M3 | Lokale Web-UI + Docker-Image | done | `make-mcp ui` (token-geschützt, 127.0.0.1), Image `ghcr.io/make-mcp/make-mcp` (amd64/arm64) |
 | M4 | Cloud-Run-Deploy-Vorlagen | done | `--transport http` → service.yaml (Knative, Secret Manager, minScale 0), skaffold.yaml (validiert mit Skaffold 2.25), README mit gcloud-Befehlen; Server verweigern öffentliches Binden ohne MCP_AUTH_TOKEN |
-| M5 | Community-Katalog + Rebuild-Action, Plugin-Marketplace-Einträge | pending | – |
+| M5 | Community-Katalog + Rebuild-Action, Plugin-Marketplace-Einträge | done | github.com/make-mcp/catalog (7 Einträge, Marketplace mit einem Plugin pro Eintrag, wöchentliche Validierung), `make-mcp run`/`catalog`, Katalog-Antworten als Intake-Vorgaben |
 
 ## Patterns to Mirror
 Kein bestehender Code im Repo und keine vergleichbaren Projekte unter `~/Sites`. Konventionen werden **neu festgelegt** und gelten ab M0:

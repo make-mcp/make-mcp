@@ -39,6 +39,9 @@ cannot be found automatically. Speak the user's language; tool output is English
 
 ## Rules
 
+- If `detect_context` reports a `catalog` entry, its answers are already applied; mention that the setup comes from
+  the community catalog (github.com/make-mcp/catalog). Users who only want to *use* such a server can install the
+  matching plugin instead: `/plugin marketplace add make-mcp/catalog`, then `/plugin install <name>@make-mcp-catalog`.
 - Large APIs (more than 40 operations) get three tools (`list_operations`, `describe_operation`,
   `call_operation`) instead of one per operation; mention this when you report the tools.
 - Prefer what detection found over guesses; if detection is wrong, let the user correct it via the questions.

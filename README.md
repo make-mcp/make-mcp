@@ -70,6 +70,22 @@ npx @make-mcp/cli generate --target https://api.example.com/openapi.json --lang 
 npx @make-mcp/cli test ./mcp-servers/daisyui-mcp
 ```
 
+### Community catalog and `make-mcp run`
+
+[make-mcp/catalog](https://github.com/make-mcp/catalog) holds community recipes – which docs or spec to use and how –
+never the documentation itself. Detection picks matching entries up automatically, and every entry is also a
+Claude Code plugin that builds the server for your project's version on first start:
+
+```
+/plugin marketplace add make-mcp/catalog
+/plugin install daisyui@make-mcp-catalog
+```
+
+```bash
+npx @make-mcp/cli catalog css              # search the catalog
+npx @make-mcp/cli run catalog:daisyui      # build once (cached), then serve over stdio
+```
+
 ### Web UI
 
 The same flow in the browser – detect, answer, preview, generate, download as ZIP, smoke-test, register:
@@ -137,7 +153,7 @@ claude mcp add make-mcp-dev -- node "$PWD/packages/cli/dist/index.js" mcp
 - ~~M2: LLM-assisted API extraction from prose docs, grouping for large APIs, Python workspace detection~~ ✓
 - ~~M3: local web UI and Docker image~~ ✓
 - ~~M4: Cloud Run deploy templates (Skaffold/Cloud Code)~~ ✓
-- M5: community catalog of generator configs
+- ~~M5: community catalog of generator configs~~ ✓
 
 ## License
 

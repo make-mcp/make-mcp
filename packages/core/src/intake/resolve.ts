@@ -84,7 +84,9 @@ export function summarizeIntake(resolved: ResolvedIntake): string {
       : []),
     ...(resolved.scopeTags ? [`Scope:       ${resolved.scopeTags.join(", ")}`] : []),
     ...(resolved.toolMode ? [`API tools:   ${resolved.toolMode === "grouped" ? "grouped (list/describe/call)" : "one per operation"}`] : []),
-    `License:     ${resolved.license ?? "unknown"} → docs ${contentMode === "embedded" ? "embedded in the server" : "fetched on first start (not redistributed)"}`,
+    ...(resolved.docs.length
+      ? [`License:     ${resolved.license ?? "unknown"} → docs ${contentMode === "embedded" ? "embedded in the server" : "fetched on first start (not redistributed)"}`]
+      : []),
     `Output:      ${resolved.language === "ts" ? "TypeScript" : "Python"}, ${resolved.transport}, ${resolved.outDir}`,
     `Register:    ${resolved.register}`,
     ...(resolved.deploy === "cloudrun" ? ["Deploy:      Google Cloud Run templates (service.yaml, skaffold.yaml)"] : []),
