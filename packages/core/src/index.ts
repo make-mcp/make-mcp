@@ -19,6 +19,7 @@ export {
   zipProject,
   refreshDocs,
   corpusCachePath,
+  hostPath,
   startExtraction,
   finishExtraction,
   GROUP_THRESHOLD,

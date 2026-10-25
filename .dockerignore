@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.e2e
+**/.e2e-ws-*
+.git
+.github
+.claude
+fixtures
+e2e
+plugins
+*.md
+!packages/**/*.md

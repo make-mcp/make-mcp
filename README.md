@@ -67,6 +67,26 @@ npx @make-mcp/cli generate --target https://api.example.com/openapi.json --lang 
 npx @make-mcp/cli test ./mcp-servers/daisyui-mcp
 ```
 
+### Web UI
+
+The same flow in the browser – detect, answer, preview, generate, download as ZIP, smoke-test, register:
+
+```bash
+npx @make-mcp/cli ui            # prints http://127.0.0.1:4321/#t=<token>
+```
+
+It listens on 127.0.0.1 only and every API call needs the token from the printed link.
+
+### Docker
+
+```bash
+docker run --rm -p 127.0.0.1:4321:4321 -v "$PWD:/workspace" -e MAKE_MCP_HOST_WORKSPACE="$PWD" ghcr.io/make-mcp/make-mcp
+docker run --rm -v "$PWD:/workspace" -e MAKE_MCP_HOST_WORKSPACE="$PWD" ghcr.io/make-mcp/make-mcp generate --target daisyui --yes
+```
+
+The image contains Node.js and uv, so generated TypeScript and Python servers can be tested inside it.
+`MAKE_MCP_HOST_WORKSPACE` makes run commands and `.mcp.json` entries point to your host paths.
+
 ## What it asks
 
 Everything that can be detected is detected; the rest is asked (max. 4 questions per round, defaults pre-selected):
@@ -112,7 +132,7 @@ claude mcp add make-mcp-dev -- node "$PWD/packages/cli/dist/index.js" mcp
 ## Roadmap
 
 - ~~M2: LLM-assisted API extraction from prose docs, grouping for large APIs, Python workspace detection~~ ✓
-- M3: local web UI and Docker image
+- ~~M3: local web UI and Docker image~~ ✓
 - M4: Cloud Run deploy templates (Skaffold/Cloud Code)
 - M5: community catalog of generator configs
 

@@ -72,7 +72,7 @@ Regeln: Felder mit hoher Erkennungssicherheit werden nur in der Abschlusszusamme
 | M0 | Repo-Setup, Tooling, CI | done | dieses Dokument |
 | M1 | Core (IR, Discovery, Intake, Generator beide Modi) + MCP-Server + Claude-Code-Plugin + CLI | done (Live-Agent-Test offen) | dieses Dokument |
 | M2 | LLM-Extraktion Markdown-API-Docs, Gruppierung großer APIs, Python-Templates vollständig, Python-Workspace-Detection | done | dieses Dokument (Abweichungen unten) |
-| M3 | Lokale Web-UI + Docker-Image | pending | – |
+| M3 | Lokale Web-UI + Docker-Image | done | `make-mcp ui` (token-geschützt, 127.0.0.1), Image `ghcr.io/make-mcp/make-mcp` (amd64/arm64) |
 | M4 | Cloud-Run-Deploy-Vorlagen | pending | – |
 | M5 | Community-Katalog + Rebuild-Action, Plugin-Marketplace-Einträge | pending | – |
 

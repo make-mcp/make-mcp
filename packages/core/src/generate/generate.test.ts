@@ -12,7 +12,7 @@ import { isMakeMcpError } from "../errors.js";
 import { createFixtureFetch } from "../fetch/fixture-fetch.js";
 import { createPoliteFetch } from "../fetch/polite-fetch.js";
 import { resolveIntake } from "../intake/resolve.js";
-import { generateProject, writeProject, zipProject } from "./project.js";
+import { generateProject, hostPath, writeProject, zipProject } from "./project.js";
 import { applyRegistration, planRegistration } from "./register.js";
 
 const fixtures = (path: string) => fileURLToPath(new URL(`../../../../fixtures/${path}`, import.meta.url));
@@ -230,5 +230,18 @@ describe("registration", () => {
     const broken = mkdtempSync(join(tmpdir(), "make-mcp-reg-broken-"));
     writeFileSync(join(broken, ".mcp.json"), "{ nope");
     expect(() => planRegistration({ ...base, workspaceRoot: broken, scope: "project", client: "claude-code" })).toThrow(/not valid JSON/);
+  });
+});
+
+describe("hostPath", () => {
+  it("maps container paths below the workspace to the host mount", () => {
+    process.env.MAKE_MCP_HOST_WORKSPACE = "/Users/me/shop";
+    try {
+      expect(hostPath("/workspace/mcp-servers/x-mcp/dist/index.js", "/workspace")).toBe("/Users/me/shop/mcp-servers/x-mcp/dist/index.js");
+      expect(hostPath("/tmp/elsewhere", "/workspace")).toBe("/tmp/elsewhere");
+    } finally {
+      delete process.env.MAKE_MCP_HOST_WORKSPACE;
+    }
+    expect(hostPath("/workspace/a", "/workspace")).toBe("/workspace/a");
   });
 });

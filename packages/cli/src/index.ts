@@ -241,7 +241,8 @@ async function main(): Promise<void> {
         workspace: resolve(values.workspace ?? process.cwd()),
         ...(values.host ? { host: values.host } : {}),
         ...(values.port ? { port: Number(values.port) } : {}),
-        container: process.env.MAKE_MCP_CONTAINER === "1",
+        // Registration from the container only makes sense when host paths are known.
+        container: process.env.MAKE_MCP_CONTAINER === "1" && !process.env.MAKE_MCP_HOST_WORKSPACE,
       });
       out(`make-mcp UI: ${ui.url}`);
       out("(the link contains an access token; stop with Ctrl+C)");

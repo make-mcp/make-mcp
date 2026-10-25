@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Eta } from "eta";
 import { strToU8, zipSync } from "fflate";
@@ -230,6 +230,17 @@ export function finishExtraction(
   return { spec, validated };
 }
 
+/**
+ * Inside the Docker image the workspace is mounted at /workspace; MAKE_MCP_HOST_WORKSPACE (the host path of that
+ * mount) turns container paths in run commands and registrations into paths that work on the host.
+ */
+export function hostPath(path: string, workspaceRoot: string): string {
+  const host = process.env.MAKE_MCP_HOST_WORKSPACE;
+  if (!host) return path;
+  const rel = relative(workspaceRoot, path);
+  return rel.startsWith("..") || isAbsolute(rel) ? path : join(host, rel);
+}
+
 function runCommand(language: "ts" | "py", outDir: string): { command: string; args: string[] } {
   return language === "ts"
     ? { command: "node", args: [join(outDir, "dist", "index.js")] }
@@ -299,7 +310,7 @@ export async function generateProject(resolved: ResolvedIntake, options: Generat
   };
 
   const envVars = envVarsFor(spec, resolved.envPrefix);
-  const run = runCommand(resolved.language, outDir);
+  const run = runCommand(resolved.language, hostPath(outDir, options.workspaceRoot));
   const components = corpus?.pages.filter((p) => p.kind === "component").length ?? 0;
   const tools = [
     ...(corpus ? ["search_docs", "get_page", "list_topics", ...(components ? ["get_component"] : [])] : []),
